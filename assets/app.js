@@ -17,11 +17,12 @@ function layout(content, active='home'){
   const nav = [['home','Home'],['partite','Partite'],['classifica','Classifica'],['squadre','Squadre'],['giocatori','Giocatori'],['statistiche','Statistiche'],['vota','Vota'],['news','News']];
   const mobile = [['home','⌂','Home'],['partite','⚽','Partite'],['classifica','🏆','Classifica'],['squadre','◫','Squadre'],[state.user?'dashboard':'login','◉',state.user?'Area':'Accedi']];
   return `<div class="shell">
+    <div class="league-strip"><div><span>PRIME LEAGUE</span><span>Stagione 2026/27</span></div><div><a href="#/news">News</a><a href="#/vota">Votazioni</a></div></div>
     <header class="topbar"><a class="brand" href="#/home"><span class="brand-mark">PL</span><span>PRIME LEAGUE<small>IL CALCIO DEL TERRITORIO</small></span></a>
     <nav class="nav">${nav.map(([r,l])=>`<a class="${active===r?'active':''}" href="#/${r}">${l}</a>`).join('')}<a class="nav-login" href="#/${state.user?'dashboard':'login'}">${state.user?'Dashboard':'Accedi'}</a></nav></header>
     <main class="container">${content}</main>
     <nav class="mobile-nav">${mobile.map(([r,i,l])=>`<a class="${active===r?'active':''}" href="#/${r}"><b>${i}</b>${l}</a>`).join('')}</nav>
-    <footer class="footer"><strong>Prime League</strong><span>Il calcio del territorio, in una nuova dimensione.</span></footer>
+    <footer class="footer"><div class="footer-inner"><div><strong>Prime League</strong><span>Il calcio del territorio, in una nuova dimensione.</span></div><div class="footer-links"><a href="#/partite">Partite</a><a href="#/classifica">Classifica</a><a href="#/squadre">Squadre</a></div></div></footer>
   </div>`;
 }
 function set(content,active){app.innerHTML=layout(content,active);window.scrollTo(0,0)}
@@ -38,33 +39,42 @@ async function home(){loading();const d=await api('public/home');
   const next=d.next?.[0];
   const recent=d.recent?.[0];
   const scorer=d.topScorers?.[0];
-  const compactStandings=d.standings.slice(0,5);
-  set(`<section class="home-intro"><div><span class="eyebrow">Piattaforma ufficiale</span><h1>Prime League</h1><p>Risultati, classifica e protagonisti del campionato, sempre aggiornati.</p></div><a class="btn primary" href="#/partite">Vai alle partite</a></section>
-
-  <section class="home-grid">
-    <div class="home-main">
-      <div class="section-head"><div><span class="eyebrow">Prossimo appuntamento</span><h2>Prossima partita</h2></div><a class="text-link" href="#/partite">Calendario completo →</a></div>
-      ${next?`<article class="featured-match card"><div class="match-date">${fmtDate(next.match_date)}${next.venue?` · ${esc(next.venue)}`:''}</div><div class="featured-teams"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><span class="featured-vs">VS</span><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><div class="round-chip">${esc(next.round_name||'Prime League')}</div></article>`:'<div class="card empty">Nessuna partita programmata.</div>'}
-
-      <div class="section-head section-gap"><div><span class="eyebrow">Campionato</span><h2>Classifica</h2></div><a class="text-link" href="#/classifica">Vedi tutto →</a></div>
-      <div class="card standings-card">${compactStandings.length?compactStandings.map((t,i)=>`<a class="standing-row" href="#/squadra/${t.slug}"><span class="standing-pos">${i+1}</span>${logo(t.logo_url,t.name)}<strong>${esc(t.name)}</strong><span>${t.played} PG</span><b>${t.points} PT</b></a>`).join(''):'<div class="empty">Classifica non disponibile.</div>'}</div>
-    </div>
-
-    <aside class="home-side">
-      <div class="section-head"><div><span class="eyebrow">In evidenza</span><h2>Ultimo risultato</h2></div></div>
-      ${recent?matchCard(recent):'<div class="card empty">Nessun risultato.</div>'}
-
-      <div class="section-head section-gap"><div><span class="eyebrow">Top player</span><h2>Capocannoniere</h2></div></div>
-      <div class="card top-player">${scorer?`${avatar(scorer.photo_url,`${scorer.first_name} ${scorer.last_name}`)}<div><strong>${esc(scorer.first_name)} ${esc(scorer.last_name)}</strong><span>${esc(scorer.team_name)}</span></div><div class="goal-count"><b>${scorer.goals}</b><span>gol</span></div>`:'<div class="empty">Nessun dato.</div>'}</div>
-
-      <div class="section-head section-gap"><div><span class="eyebrow">Community</span><h2>Votazioni</h2></div></div>
-      <a class="card vote-card" href="#/vota"><span class="vote-icon">★</span><div><strong>Premio del pubblico</strong><span>Partecipa alle votazioni attive</span></div><b>→</b></a>
-    </aside>
+  const secondScorer=d.topScorers?.[1];
+  const thirdScorer=d.topScorers?.[2];
+  const compactStandings=d.standings.slice(0,6);
+  const quickMatches=[...(d.next||[]).slice(0,3),...(d.recent||[]).slice(0,2)];
+  set(`<section class="season-hero">
+    <div class="season-copy"><span class="eyebrow light">Stagione ufficiale 2026/27</span><h1>Prime League</h1><p>Partite, risultati, classifiche e protagonisti. Tutto il campionato in un unico posto.</p><div class="hero-actions"><a class="btn white" href="#/partite">Calendario</a><a class="btn glass" href="#/classifica">Classifica</a></div></div>
+    ${next?`<article class="hero-match"><div class="hero-match-top"><span>${esc(next.round_name||'Prossima giornata')}</span><span>${fmtDate(next.match_date)}</span></div><div class="hero-clubs"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><div class="hero-vs"><b>VS</b><small>${esc(next.venue||'Campo da definire')}</small></div><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><a href="#/partite">Dettagli partita →</a></article>`:'<article class="hero-match empty">Nessuna partita programmata.</article>'}
   </section>
 
-  <section class="section"><div class="section-head"><div><span class="eyebrow">Aggiornamenti</span><h2>Ultime notizie</h2></div><a class="text-link" href="#/news">Tutte le news →</a></div><div class="grid three">${d.news.slice(0,3).map(n=>`<article class="card news-card"><span class="news-label">News</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p></article>`).join('')||'<div class="card empty">Nessuna notizia.</div>'}</div></section>
+  <section class="score-ribbon">
+    <div class="score-ribbon-head"><strong>Partite</strong><a href="#/partite">Vedi calendario completo</a></div>
+    <div class="score-scroll">${quickMatches.length?quickMatches.map(m=>`<article class="mini-match"><div><span>${esc(m.round_name||'Prime League')}</span><small>${fmtDate(m.match_date)}</small></div><div class="mini-score"><b>${esc(initials(m.home_name))}</b><strong>${m.status==='published'?m.home_score:'-'}</strong><span>${esc(m.home_name)}</span></div><div class="mini-score"><b>${esc(initials(m.away_name))}</b><strong>${m.status==='published'?m.away_score:'-'}</strong><span>${esc(m.away_name)}</span></div></article>`).join(''):'<div class="empty">Nessuna partita disponibile.</div>'}</div>
+  </section>
 
-  ${d.sponsors.length?`<section class="section sponsor-section"><div class="section-head"><div><span class="eyebrow">Partner</span><h2>Sponsor ufficiali</h2></div></div><div class="sponsor-row">${d.sponsors.map(s=>`<div class="sponsor-chip">${esc(s.name)}</div>`).join('')}</div></section>`:''}`,'home')
+  <section class="dashboard-grid">
+    <div class="panel standings-panel"><div class="panel-head"><div><span class="eyebrow">Campionato</span><h2>Classifica</h2></div><a href="#/classifica">Classifica completa →</a></div>
+      <div class="league-table">${compactStandings.length?compactStandings.map((t,i)=>`<a class="league-row" href="#/squadra/${t.slug}"><span class="position ${i<3?'top':''}">${i+1}</span>${logo(t.logo_url,t.name)}<strong>${esc(t.name)}</strong><span class="form-pill">${t.played} PG</span><b>${t.points}</b></a>`).join(''):'<div class="empty">Classifica non disponibile.</div>'}</div>
+    </div>
+
+    <div class="side-stack">
+      <div class="panel"><div class="panel-head"><div><span class="eyebrow">In evidenza</span><h2>Ultimo risultato</h2></div></div>${recent?`<div class="result-focus"><div>${logo(recent.home_logo,recent.home_name)}<span>${esc(recent.home_name)}</span></div><strong>${recent.home_score} <i>-</i> ${recent.away_score}</strong><div>${logo(recent.away_logo,recent.away_name)}<span>${esc(recent.away_name)}</span></div></div><div class="result-meta">${esc(recent.round_name||'')} · ${fmtDate(recent.match_date)}</div>`:'<div class="empty">Nessun risultato.</div>'}</div>
+      <a class="panel fan-panel" href="#/vota"><div><span class="eyebrow light">Community</span><h2>Vota il protagonista</h2><p>Partecipa alle votazioni ufficiali della Prime League.</p></div><span class="fan-arrow">→</span></a>
+    </div>
+  </section>
+
+  <section class="section"><div class="section-head"><div><span class="eyebrow">Statistiche</span><h2>Top marcatori</h2></div><a class="text-link" href="#/statistiche">Tutte le statistiche →</a></div>
+    <div class="scorers-grid">${[scorer,secondScorer,thirdScorer].filter(Boolean).map((p,i)=>`<a class="scorer-card rank-${i+1}" href="#/giocatore/${p.slug}"><span class="scorer-rank">${i+1}</span>${avatar(p.photo_url,`${p.first_name} ${p.last_name}`)}<div><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong><span>${esc(p.team_name)}</span></div><div class="scorer-goals"><b>${p.goals}</b><span>gol</span></div></a>`).join('')||'<div class="panel empty">Nessun dato disponibile.</div>'}</div>
+  </section>
+
+  <section class="section"><div class="section-head"><div><span class="eyebrow">Club</span><h2>Le squadre</h2></div><a class="text-link" href="#/squadre">Tutte le squadre →</a></div>
+    <div class="clubs-strip">${(d.teams||[]).slice(0,10).map(t=>`<a class="club-badge" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<span>${esc(t.name)}</span></a>`).join('')||'<div class="panel empty">Nessuna squadra.</div>'}</div>
+  </section>
+
+  <section class="section"><div class="section-head"><div><span class="eyebrow">Aggiornamenti</span><h2>Ultime notizie</h2></div><a class="text-link" href="#/news">Tutte le news →</a></div><div class="news-grid">${d.news.slice(0,3).map((n,i)=>`<article class="news-feature ${i===0?'main':''}"><span>Prime League</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><a href="#/news">Leggi la notizia →</a></article>`).join('')||'<div class="panel empty">Nessuna notizia.</div>'}</div></section>
+
+  ${d.sponsors.length?`<section class="section sponsors-block"><div class="section-head"><div><span class="eyebrow">Partner</span><h2>Sponsor ufficiali</h2></div></div><div class="sponsor-wall">${d.sponsors.map(s=>`<div class="sponsor-logo">${s.logo_url?`<img src="${esc(s.logo_url)}" alt="${esc(s.name)}">`:`<strong>${esc(s.name)}</strong>`}</div>`).join('')}</div></section>`:''}`,'home')
 }
 
 async function matches(){loading();const d=await api('public/matches');set(`<div class="section-head"><div><span class="eyebrow">Calendario ufficiale</span><h2>Partite</h2></div></div><div class="grid two">${d.matches.map(matchCard).join('')||'<div class="card empty">Nessuna partita.</div>'}</div>`,'partite')}
