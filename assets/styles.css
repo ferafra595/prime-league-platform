@@ -147,3 +147,58 @@
 .club-badge span{font-size:.82rem;line-height:1.2}
 @media(max-width:980px){.clubs-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:650px){.clubs-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.club-badge{min-height:125px}.club-badge .logo{width:68px;height:68px}}
+
+/* Home: fascia club con soli stemmi, senza card o cornici */
+.clubs-strip{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:26px;
+  padding:18px 22px;
+  background:transparent;
+  border-top:1px solid rgba(14,42,86,.14);
+  border-bottom:1px solid rgba(14,42,86,.14);
+  overflow-x:auto;
+  scrollbar-width:thin;
+}
+.club-badge{
+  flex:0 0 auto;
+  min-height:0;
+  padding:0;
+  background:transparent;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.club-badge:hover{
+  transform:translateY(-3px) scale(1.04);
+  box-shadow:none;
+}
+.club-badge .logo{
+  width:76px;
+  height:76px;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+  object-fit:contain;
+}
+.club-badge .logo:not(img){
+  border-radius:50%;
+  background:#eef3fb;
+  color:var(--blue);
+  width:62px;
+  height:62px;
+}
+@media(max-width:980px){
+  .clubs-strip{justify-content:flex-start;gap:24px;padding-inline:14px}
+}
+@media(max-width:650px){
+  .clubs-strip{display:flex;gap:20px;padding:14px 8px}
+  .club-badge{min-height:0}
+  .club-badge .logo{width:62px;height:62px}
+}
