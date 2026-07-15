@@ -5,4 +5,4 @@ pages_build_output_dir = "."
 [[d1_databases]]
 binding = "DB"
 database_name = "prime-league-db"
-database_id = "INSERISCI_QUI_DATABASE_ID"
+database_id = "bd930d71-8ef3-49b8-9abd-feeb31e5a33f"
