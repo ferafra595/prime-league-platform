@@ -24,7 +24,12 @@ function layout(content, active='home'){
     <nav class="mobile-nav">${mobile.map(([r,i,l])=>`<a class="${active===r?'active':''}" href="#/${r}"><b>${i}</b>${l}</a>`).join('')}</nav>
     <div class="brand-marquee" aria-hidden="true"><div class="brand-marquee-track">${Array.from({length:10},()=>`<span><img src="/assets/prime-league-crest.png" alt=""> PRIME LEAGUE</span>`).join('')}</div></div>
     <footer class="footer mega-footer"><div class="footer-grid">
-      <div class="footer-brand"><div class="footer-logo-lockup"><img src="/assets/prime-league-crest.png" alt="Prime League"><strong>PRIME LEAGUE</strong></div><p>Il calcio del territorio, in una nuova dimensione.</p><div class="social-row"><a href="#" aria-label="Instagram">IG</a><a href="#" aria-label="Facebook">FB</a><a href="#" aria-label="TikTok">TK</a><a href="#" aria-label="YouTube">YT</a></div></div>
+      <div class="footer-brand"><div class="footer-logo-lockup"><img src="/assets/prime-league-crest.png" alt="Prime League"><strong>PRIME LEAGUE</strong></div><p>Il calcio del territorio, in una nuova dimensione.</p><div class="social-row">
+        <a href="#" aria-label="Instagram" title="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"></rect><circle cx="12" cy="12" r="4.2"></circle><circle class="social-fill" cx="17.5" cy="6.5" r="1.15"></circle></svg></a>
+        <a href="#" aria-label="Facebook" title="Facebook"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="social-fill" d="M13.6 21v-8h2.7l.4-3h-3.1V8.1c0-.9.3-1.6 1.6-1.6H17V3.8c-.5-.1-1.4-.2-2.5-.2-2.5 0-4.2 1.5-4.2 4.3V10H7.5v3h2.8v8h3.3Z"></path></svg></a>
+        <a href="#" aria-label="TikTok" title="TikTok"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="social-fill" d="M15 3c.4 2.2 1.7 3.5 4 3.7v3.1a8.3 8.3 0 0 1-4-1.2v6.1a6 6 0 1 1-5.2-5.9v3.2a2.9 2.9 0 1 0 2 2.7V3H15Z"></path></svg></a>
+        <a href="#" aria-label="YouTube" title="YouTube"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="social-fill" d="M21 8.1a3 3 0 0 0-2.1-2.2C17.1 5.4 12 5.4 12 5.4s-5.1 0-6.9.5A3 3 0 0 0 3 8.1a31 31 0 0 0-.5 3.9c0 1.3.2 2.6.5 3.9a3 3 0 0 0 2.1 2.2c1.8.5 6.9.5 6.9.5s5.1 0 6.9-.5a3 3 0 0 0 2.1-2.2c.3-1.3.5-2.6.5-3.9s-.2-2.6-.5-3.9ZM10 15.2V8.8l5.5 3.2-5.5 3.2Z"></path></svg></a>
+      </div></div>
       <div><h4>Campionato</h4><a href="#/squadre">Squadre</a><a href="#/giocatori">Giocatori</a><a href="#/partite">Partite</a><a href="#/classifica">Classifica</a></div>
       <div><h4>Prime League</h4><a href="#/statistiche">Statistiche</a><a href="#/vota">Votazioni</a><a href="#/news">Notizie</a><a href="#/home">Sponsor</a></div>
       <div><h4>Informazioni</h4><a href="#/home">Regolamento</a><a href="#/home">Come si gioca</a><a href="#/home">Contatti</a><a href="#/login">Area riservata</a></div>
@@ -69,6 +74,8 @@ async function home(){loading();const [d,statsData]=await Promise.all([api('publ
     ${next?`<article class="hero-match"><div class="hero-match-top"><span>${esc(next.round_name||'Prossima giornata')}</span><span>${fmtDate(next.match_date)}</span></div><div class="hero-clubs"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><div class="hero-vs"><b>VS</b><small>${esc(next.venue||'Campo da definire')}</small></div><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><a href="#/partite">Dettagli partita →</a></article>`:'<article class="hero-match empty">Nessuna partita programmata.</article>'}
   </section>
 
+  ${next?`<section class="countdown-section" data-kickoff="${esc(next.match_date)}"><div class="countdown-overlay"></div><div class="countdown-content"><span>${esc(next.round_name||'Prossima giornata')}</span><h2>Prossima giornata</h2><div class="countdown-grid"><div><b id="cd-days">00</b><small>Giorni</small></div><div><b id="cd-hours">00</b><small>Ore</small></div><div><b id="cd-minutes">00</b><small>Minuti</small></div><div><b id="cd-seconds">00</b><small>Secondi</small></div></div></div></section>`:''}
+
   <section class="score-ribbon">
     <div class="score-ribbon-head"><strong>Partite</strong><a href="#/partite">Vedi calendario completo</a></div>
     <div class="score-scroll">${quickMatches.length?quickMatches.map(m=>`<article class="mini-match"><div><span>${esc(m.round_name||'Prime League')}</span><small>${fmtDate(m.match_date)}</small></div><div class="mini-score"><b>${esc(initials(m.home_name))}</b><strong>${m.status==='published'?m.home_score:'-'}</strong><span>${esc(m.home_name)}</span></div><div class="mini-score"><b>${esc(initials(m.away_name))}</b><strong>${m.status==='published'?m.away_score:'-'}</strong><span>${esc(m.away_name)}</span></div></article>`).join(''):'<div class="empty">Nessuna partita disponibile.</div>'}</div>
@@ -92,8 +99,6 @@ async function home(){loading();const [d,statsData]=await Promise.all([api('publ
       ${statPanel('cards','Cartellini',statsData.yellows,'cards')}
     </div>
   </section>
-
-  ${next?`<section class="countdown-section" data-kickoff="${esc(next.match_date)}"><div class="countdown-overlay"></div><div class="countdown-content"><span>${esc(next.round_name||'Prossima giornata')}</span><h2>Prossima giornata</h2><div class="countdown-grid"><div><b id="cd-days">00</b><small>Giorni</small></div><div><b id="cd-hours">00</b><small>Ore</small></div><div><b id="cd-minutes">00</b><small>Minuti</small></div><div><b id="cd-seconds">00</b><small>Secondi</small></div></div></div></section>`:''}
 
   <div class="brand-marquee home-marquee" aria-hidden="true"><div class="brand-marquee-track">${Array.from({length:10},()=>`<span><img src="/assets/prime-league-crest.png" alt=""> PRIME LEAGUE</span>`).join('')}</div></div>
 
