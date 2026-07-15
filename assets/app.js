@@ -46,7 +46,8 @@ function matchCard(m){
 }
 function standingsTable(rows){return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th></tr></thead><tbody>${rows.map((t,i)=>`<tr><td class="rank">${i+1}</td><td><a href="#/squadra/${t.slug}"><b>${esc(t.name)}</b></a></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td>${t.gd}</td><td><b>${t.points}</b></td></tr>`).join('')}</tbody></table></div>`}
 
-async function home(){loading();const [d,statsData]=await Promise.all([api('public/home'),api('public/stats')]);
+async function home(){loading();const [d,statsData,teamsData]=await Promise.all([api('public/home'),api('public/stats'),api('public/teams')]);
+  const homeTeams = teamsData.teams || [];
   const next=d.next?.[0];
   const recent=d.recent?.[0];
   const compactStandings=d.standings.slice(0,6);
@@ -103,7 +104,7 @@ async function home(){loading();const [d,statsData]=await Promise.all([api('publ
   <div class="brand-marquee home-marquee" aria-hidden="true"><div class="brand-marquee-track">${Array.from({length:10},()=>`<span><img src="/assets/prime-league-crest.png" alt=""> PRIME LEAGUE</span>`).join('')}</div></div>
 
   <section class="section"><div class="section-head"><div><span class="eyebrow">Club</span><h2>Le squadre</h2></div><a class="text-link" href="#/squadre">Tutte le squadre →</a></div>
-    <div class="clubs-strip">${(d.teams||[]).slice(0,10).map(t=>`<a class="club-badge" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<span>${esc(t.name)}</span></a>`).join('')||'<div class="panel empty">Nessuna squadra.</div>'}</div>
+    <div class="clubs-strip">${homeTeams.slice(0,10).map(t=>`<a class="club-badge" href="#/squadra/${t.slug}" title="${esc(t.name)}">${logo(t.logo_url,t.name)}<span>${esc(t.name)}</span></a>`).join('')||'<div class="panel empty">Inserisci le squadre dall’area Admin.</div>'}</div>
   </section>
 
   <section class="section"><div class="section-head"><div><span class="eyebrow">Aggiornamenti</span><h2>Ultime notizie</h2></div><a class="text-link" href="#/news">Tutte le news →</a></div><div class="news-grid">${d.news.slice(0,3).map((n,i)=>`<article class="news-feature ${i===0?'main':''} ${n.cover_url?'has-cover':''}" style="${n.cover_url?`--news-cover:url('${esc(n.cover_url)}')`:''}"><div class="news-overlay"></div><div class="news-content"><span>Prime League</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><a href="#/news">Leggi la notizia →</a></div></article>`).join('')||'<div class="panel empty">Nessuna notizia.</div>'}</div></section>
