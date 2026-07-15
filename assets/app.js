@@ -18,11 +18,17 @@ function layout(content, active='home'){
   const mobile = [['home','⌂','Home'],['partite','⚽','Partite'],['classifica','🏆','Classifica'],['squadre','◫','Squadre'],[state.user?'dashboard':'login','◉',state.user?'Area':'Accedi']];
   return `<div class="shell">
     <div class="league-strip" id="live-strip"><div><span>PRIME LEAGUE</span><span>Stagione 2026/27</span></div><div><a href="#/news">News</a><a href="#/vota">Votazioni</a></div></div>
-    <header class="topbar"><a class="brand" href="#/home"><img class="brand-crest" src="/assets/prime-league-crest.jpg" alt="Logo Prime League"><span>PRIME LEAGUE<small>IL CALCIO DEL TERRITORIO</small></span></a>
+    <header class="topbar"><a class="brand" href="#/home"><img class="brand-crest" src="/assets/prime-league-crest.png" alt="Logo Prime League"><span>PRIME LEAGUE<small>IL CALCIO DEL TERRITORIO</small></span></a>
     <nav class="nav">${nav.map(([r,l])=>`<a class="${active===r?'active':''}" href="#/${r}">${l}</a>`).join('')}<a class="nav-login" href="#/${state.user?'dashboard':'login'}">${state.user?'Dashboard':'Accedi'}</a></nav></header>
     <main class="container">${content}</main>
     <nav class="mobile-nav">${mobile.map(([r,i,l])=>`<a class="${active===r?'active':''}" href="#/${r}"><b>${i}</b>${l}</a>`).join('')}</nav>
-    <footer class="footer"><div class="footer-inner"><div><strong>Prime League</strong><span>Il calcio del territorio, in una nuova dimensione.</span></div><div class="footer-links"><a href="#/partite">Partite</a><a href="#/classifica">Classifica</a><a href="#/squadre">Squadre</a></div></div></footer>
+    <div class="brand-marquee" aria-hidden="true"><div class="brand-marquee-track">${Array.from({length:10},()=>`<span><img src="/assets/prime-league-crest.png" alt=""> PRIME LEAGUE</span>`).join('')}</div></div>
+    <footer class="footer mega-footer"><div class="footer-grid">
+      <div class="footer-brand"><div class="footer-logo-lockup"><img src="/assets/prime-league-crest.png" alt="Prime League"><strong>PRIME LEAGUE</strong></div><p>Il calcio del territorio, in una nuova dimensione.</p><div class="social-row"><a href="#" aria-label="Instagram">IG</a><a href="#" aria-label="Facebook">FB</a><a href="#" aria-label="TikTok">TK</a><a href="#" aria-label="YouTube">YT</a></div></div>
+      <div><h4>Campionato</h4><a href="#/squadre">Squadre</a><a href="#/giocatori">Giocatori</a><a href="#/partite">Partite</a><a href="#/classifica">Classifica</a></div>
+      <div><h4>Prime League</h4><a href="#/statistiche">Statistiche</a><a href="#/vota">Votazioni</a><a href="#/news">Notizie</a><a href="#/home">Sponsor</a></div>
+      <div><h4>Informazioni</h4><a href="#/home">Regolamento</a><a href="#/home">Come si gioca</a><a href="#/home">Contatti</a><a href="#/login">Area riservata</a></div>
+    </div><div class="footer-bottom"><span>© 2026 Prime League. Tutti i diritti riservati.</span><div><a href="#/home">Avviso legale</a><a href="#/home">Privacy e cookie</a><a href="#/home">Segnalazioni</a></div></div></footer>
   </div>`;
 }
 function set(content,active){app.innerHTML=layout(content,active);window.scrollTo(0,0)}
@@ -35,17 +41,31 @@ function matchCard(m){
 }
 function standingsTable(rows){return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th></tr></thead><tbody>${rows.map((t,i)=>`<tr><td class="rank">${i+1}</td><td><a href="#/squadra/${t.slug}"><b>${esc(t.name)}</b></a></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td>${t.gd}</td><td><b>${t.points}</b></td></tr>`).join('')}</tbody></table></div>`}
 
-async function home(){loading();const d=await api('public/home');
+async function home(){loading();const [d,statsData]=await Promise.all([api('public/home'),api('public/stats')]);
   const next=d.next?.[0];
   const recent=d.recent?.[0];
-  const scorer=d.topScorers?.[0];
-  const secondScorer=d.topScorers?.[1];
-  const thirdScorer=d.topScorers?.[2];
   const compactStandings=d.standings.slice(0,6);
   const quickMatches=[...(d.next||[]).slice(0,3),...(d.recent||[]).slice(0,2)];
-  const liveLabel = next ? `Prossima giornata · ${fmtDate(next.match_date)}` : (recent ? `Ultimo risultato · ${recent.home_name} ${recent.home_score}-${recent.away_score} ${recent.away_name}` : 'Stagione 2026/27');
+  const statRows=(rows=[])=>rows.slice(0,3);
+  const emptyPlayer={first_name:'Giocatore',last_name:'',team_name:'Squadra',photo_url:'',team_logo:'',slug:'',value:0};
+  const padRows=(rows=[])=>[...rows,...Array(Math.max(0,3-rows.length)).fill(emptyPlayer)].slice(0,3);
+  const statPanel=(type,title,rows,unit,extra='')=>{
+    const safe=padRows(rows);
+    const lead=safe[0];
+    return `<article class="stat-feature ${type}">
+      <div class="stat-visual">
+        <div class="stat-title">${extra}<span>${esc(title)}</span></div>
+        <div class="stat-lead-photo">${lead.photo_url?`<img src="${esc(lead.photo_url)}" alt="${esc(lead.first_name+' '+lead.last_name)}">`:`<div class="player-silhouette"><span>${esc(initials(lead.first_name+' '+lead.last_name))}</span></div>`}</div>
+        <div class="stat-lead-meta"><span>${esc(lead.team_name)}</span><strong>${esc(lead.first_name)} ${esc(lead.last_name)}</strong></div>
+      </div>
+      <div class="stat-ranking">${safe.map((p,i)=>`<a class="stat-row" href="${p.slug?`#/giocatore/${p.slug}`:'#/statistiche'}">
+        <span class="stat-rank">${i+1}</span>${logo(p.team_logo,p.team_name)}
+        <strong>${esc(p.first_name)} ${esc(p.last_name)}</strong><b>${p.value||0}</b>${unit==='cards'?`<span class="card-dots"><i></i><em></em></span>`:`<small>${unit}</small>`}
+      </a>`).join('')}</div><a class="stat-more" href="#/statistiche">Vedi altro</a>
+    </article>`;
+  };
   set(`<section class="season-hero">
-    <div class="season-copy"><img class="hero-crest" src="/assets/prime-league-crest.jpg" alt=""><span class="eyebrow light">Stagione ufficiale 2026/27</span><h1>Prime League</h1><p>Partite, risultati, classifiche e protagonisti. Tutto il campionato in un unico posto.</p><div class="hero-actions"><a class="btn white" href="#/partite">Calendario</a><a class="btn glass" href="#/classifica">Classifica</a></div></div>
+    <div class="season-copy"><img class="hero-crest" src="/assets/prime-league-crest.png" alt=""><span class="eyebrow light">Stagione ufficiale 2026/27</span><h1>Prime League</h1><p>Partite, risultati, classifiche e protagonisti. Tutto il campionato in un unico posto.</p><div class="hero-actions"><a class="btn white" href="#/partite">Calendario</a><a class="btn glass" href="#/classifica">Classifica</a></div></div>
     ${next?`<article class="hero-match"><div class="hero-match-top"><span>${esc(next.round_name||'Prossima giornata')}</span><span>${fmtDate(next.match_date)}</span></div><div class="hero-clubs"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><div class="hero-vs"><b>VS</b><small>${esc(next.venue||'Campo da definire')}</small></div><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><a href="#/partite">Dettagli partita →</a></article>`:'<article class="hero-match empty">Nessuna partita programmata.</article>'}
   </section>
 
@@ -58,16 +78,24 @@ async function home(){loading();const d=await api('public/home');
     <div class="panel standings-panel"><div class="panel-head"><div><span class="eyebrow">Campionato</span><h2>Classifica</h2></div><a href="#/classifica">Classifica completa →</a></div>
       <div class="league-table">${compactStandings.length?compactStandings.map((t,i)=>`<a class="league-row" href="#/squadra/${t.slug}"><span class="position ${i<3?'top':''}">${i+1}</span>${logo(t.logo_url,t.name)}<strong>${esc(t.name)}</strong><span class="form-pill">${t.played} PG</span><b>${t.points}</b></a>`).join(''):'<div class="empty">Classifica non disponibile.</div>'}</div>
     </div>
-
     <div class="side-stack">
       <div class="panel"><div class="panel-head"><div><span class="eyebrow">In evidenza</span><h2>Ultimo risultato</h2></div></div>${recent?`<div class="result-focus"><div>${logo(recent.home_logo,recent.home_name)}<span>${esc(recent.home_name)}</span></div><strong>${recent.home_score} <i>-</i> ${recent.away_score}</strong><div>${logo(recent.away_logo,recent.away_name)}<span>${esc(recent.away_name)}</span></div></div><div class="result-meta">${esc(recent.round_name||'')} · ${fmtDate(recent.match_date)}</div>`:'<div class="empty">Nessun risultato.</div>'}</div>
       <a class="panel fan-panel" href="#/vota"><div><span class="eyebrow light">Community</span><h2>Vota il protagonista</h2><p>Partecipa alle votazioni ufficiali della Prime League.</p></div><span class="fan-arrow">→</span></a>
     </div>
   </section>
 
-  <section class="section"><div class="section-head"><div><span class="eyebrow">Statistiche</span><h2>Top marcatori</h2></div><a class="text-link" href="#/statistiche">Tutte le statistiche →</a></div>
-    <div class="scorers-grid">${[scorer,secondScorer,thirdScorer].filter(Boolean).map((p,i)=>`<a class="scorer-card rank-${i+1}" href="#/giocatore/${p.slug}"><div class="scorer-photo">${avatar(p.photo_url,`${p.first_name} ${p.last_name}`)}<span class="scorer-medal">${i===0?'1°':i===1?'2°':'3°'}</span></div><div class="scorer-info"><span class="scorer-label">${i===0?'Capocannoniere':'Top marcatore'}</span><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong><span>${esc(p.team_name)}</span></div><div class="scorer-goals"><b>${p.goals}</b><span>gol</span></div></a>`).join('')||'<div class="panel empty">Nessun dato disponibile.</div>'}</div>
+  <section class="stats-showcase"><div class="stats-showcase-head"><h2>Statistiche</h2><a href="#/statistiche">Vedi altro</a></div>
+    <div class="stats-showcase-grid">
+      ${statPanel('mvp','MVP',statsData.mvps,'MVP','<small>Partita</small>')}
+      ${statPanel('goals','Miglior marcatore',statsData.scorers,'Gol')}
+      ${statPanel('assists','Top uomo-assist',statsData.assists,'Assist')}
+      ${statPanel('cards','Cartellini',statsData.yellows,'cards')}
+    </div>
   </section>
+
+  ${next?`<section class="countdown-section" data-kickoff="${esc(next.match_date)}"><div class="countdown-overlay"></div><div class="countdown-content"><span>${esc(next.round_name||'Prossima giornata')}</span><h2>Prossima giornata</h2><div class="countdown-grid"><div><b id="cd-days">00</b><small>Giorni</small></div><div><b id="cd-hours">00</b><small>Ore</small></div><div><b id="cd-minutes">00</b><small>Minuti</small></div><div><b id="cd-seconds">00</b><small>Secondi</small></div></div></div></section>`:''}
+
+  <div class="brand-marquee home-marquee" aria-hidden="true"><div class="brand-marquee-track">${Array.from({length:10},()=>`<span><img src="/assets/prime-league-crest.png" alt=""> PRIME LEAGUE</span>`).join('')}</div></div>
 
   <section class="section"><div class="section-head"><div><span class="eyebrow">Club</span><h2>Le squadre</h2></div><a class="text-link" href="#/squadre">Tutte le squadre →</a></div>
     <div class="clubs-strip">${(d.teams||[]).slice(0,10).map(t=>`<a class="club-badge" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<span>${esc(t.name)}</span></a>`).join('')||'<div class="panel empty">Nessuna squadra.</div>'}</div>
@@ -75,9 +103,13 @@ async function home(){loading();const d=await api('public/home');
 
   <section class="section"><div class="section-head"><div><span class="eyebrow">Aggiornamenti</span><h2>Ultime notizie</h2></div><a class="text-link" href="#/news">Tutte le news →</a></div><div class="news-grid">${d.news.slice(0,3).map((n,i)=>`<article class="news-feature ${i===0?'main':''} ${n.cover_url?'has-cover':''}" style="${n.cover_url?`--news-cover:url('${esc(n.cover_url)}')`:''}"><div class="news-overlay"></div><div class="news-content"><span>Prime League</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><a href="#/news">Leggi la notizia →</a></div></article>`).join('')||'<div class="panel empty">Nessuna notizia.</div>'}</div></section>
 
-  ${d.sponsors.length?`<section class="section sponsors-block"><div class="section-head"><div><span class="eyebrow">Partner</span><h2>Sponsor ufficiali</h2></div></div><div class="sponsor-wall">${d.sponsors.map(s=>`<div class="sponsor-logo">${s.logo_url?`<img src="${esc(s.logo_url)}" alt="${esc(s.name)}">`:`<strong>${esc(s.name)}</strong>`}</div>`).join('')}</div></section>`:''}`,'home')
+  ${d.sponsors.length?`<section class="section sponsors-block"><div class="section-head"><div><span class="eyebrow">Partner</span><h2>Sponsor ufficiali</h2></div></div><div class="sponsor-wall">${d.sponsors.map(s=>`<div class="sponsor-logo">${s.logo_url?`<img src="${esc(s.logo_url)}" alt="${esc(s.name)}">`:`<strong>${esc(s.name)}</strong>`}</div>`).join('')}</div></section>`:''}`,'home');
+  if(next){
+    const kickoff=new Date(next.match_date).getTime();
+    const tick=()=>{const left=Math.max(0,kickoff-Date.now());const total=Math.floor(left/1000);const days=Math.floor(total/86400);const hours=Math.floor((total%86400)/3600);const mins=Math.floor((total%3600)/60);const secs=total%60;const put=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=String(v).padStart(2,'0')};put('cd-days',days);put('cd-hours',hours);put('cd-minutes',mins);put('cd-seconds',secs)};
+    tick();window.__primeCountdown&&clearInterval(window.__primeCountdown);window.__primeCountdown=setInterval(tick,1000);
+  }
 }
-
 async function matches(){loading();const d=await api('public/matches');set(`<div class="section-head"><div><span class="eyebrow">Calendario ufficiale</span><h2>Partite</h2></div></div><div class="grid two">${d.matches.map(matchCard).join('')||'<div class="card empty">Nessuna partita.</div>'}</div>`,'partite')}
 async function table(){loading();const d=await api('public/standings');set(`<div class="section-head"><div><span class="eyebrow">Prime League</span><h2>Classifica</h2></div></div>${standingsTable(d.standings)}`,'classifica')}
 async function teams(){loading();const d=await api('public/teams');set(`<div class="section-head"><div><span class="eyebrow">Club</span><h2>Squadre</h2></div></div><div class="grid three">${d.teams.map(t=>`<a class="card team-card" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<div><h3>${esc(t.name)}</h3><div class="muted">${t.players_count} giocatori</div></div></a>`).join('')}</div>`,'squadre')}
