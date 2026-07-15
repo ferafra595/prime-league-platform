@@ -162,10 +162,12 @@ async function route(request, env, path) {
     return json({matches:rows.results});
   }
   if (path === 'public/stats') {
-    const scorers = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const assists = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.assist_player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' AND e.assist_player_id IS NOT NULL GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const mvps = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,COUNT(*) value FROM matches m JOIN players p ON p.id=m.mvp_player_id JOIN teams t ON t.id=p.team_id WHERE m.status='published' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    return json({scorers:scorers.results,assists:assists.results,mvps:mvps.results});
+    const scorers = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
+    const assists = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.assist_player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' AND e.assist_player_id IS NOT NULL GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
+    const mvps = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,COUNT(*) value FROM matches m JOIN players p ON p.id=m.mvp_player_id JOIN teams t ON t.id=p.team_id WHERE m.status='published' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
+    const yellows = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='yellow' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
+    const reds = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='red' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
+    return json({scorers:scorers.results,assists:assists.results,mvps:mvps.results,yellows:yellows.results,reds:reds.results});
   }
   if (path === 'public/news') {
     const rows = await env.DB.prepare('SELECT * FROM news WHERE is_published=1 ORDER BY published_at DESC').all();
