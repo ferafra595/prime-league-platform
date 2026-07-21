@@ -10,3 +10,12 @@
 .team-area-empty{text-align:center;background:#fff;border:1px solid #dbe4ef;border-radius:18px;padding:35px;color:#718095}.team-area-empty.compact{padding:17px}
 @media(max-width:1100px){.team-roster-grid{grid-template-columns:1fr 1fr}.team-match-tabs{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){.team-roster-summary,.team-roster-grid,.team-match-grid{grid-template-columns:1fr}.team-roster-filters{grid-template-columns:1fr}.team-match-tabs{grid-template-columns:1fr 1fr}.team-event-heading,.team-report-submit{flex-direction:column}.team-event-row{grid-template-columns:1fr}.team-report-score{gap:7px}}
+
+
+.team-report-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+.team-report-flow>div{display:flex;align-items:center;gap:9px;background:#f5f8fc;border:1px solid #dce5f0;border-radius:13px;padding:11px}
+.team-report-flow b{width:25px;height:25px;flex:0 0 25px;display:grid;place-items:center;border-radius:50%;background:#07172f;color:#fff;font-size:11px}
+.team-report-flow span{font-size:12px;font-weight:800;color:#536176}
+.report-submission-note>div{display:flex;flex-direction:column}
+.report-submission-note>b{font-size:13px;color:#07172f}
+@media(max-width:700px){.team-report-flow{grid-template-columns:1fr}}

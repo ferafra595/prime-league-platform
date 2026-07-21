@@ -887,7 +887,7 @@ async function teamMatchesArea(){
       <div class="team-match-meta"><span>${esc(m.venue||'Campo da definire')}</span><span>Avversario: ${esc(opponent)}</span></div>
       ${m.submission_status==='rejected'?`<div class="team-rejection"><strong>Referto da correggere</strong><span>${esc(m.admin_note||'Controlla i dati e invialo nuovamente.')}</span></div>`:''}
       <div class="team-match-actions">
-        ${['todo','rejected'].includes(st)?`<button class="btn primary small submit-team-report" data-id="${m.id}">${st==='rejected'?'Correggi e reinvia':'Compila referto'}</button>`:''}
+        ${['upcoming','todo','rejected'].includes(st)?`<button class="btn primary small submit-team-report" data-id="${m.id}">${st==='rejected'?'Correggi e reinvia':'Compila referto'}</button>`:''}
         ${st==='pending'?'<span class="team-waiting">In attesa di approvazione Admin</span>':''}
         <a class="btn small" href="#/partita/${m.id}">Scheda partita</a>
       </div>
@@ -913,6 +913,15 @@ async function teamMatchesArea(){
   const openReport=m=>{
     let events=[];
     if(m.submission_events_json){try{events=JSON.parse(m.submission_events_json)||[]}catch{}}
+    let submissionNotes=m.submission_notes||'';
+    let proposedMvp=m.submission_mvp_player_id||null;
+    try{
+      const parsedNotes=JSON.parse(submissionNotes);
+      if(parsedNotes&&typeof parsedNotes==='object'){
+        submissionNotes=parsedNotes.text||'';
+        proposedMvp=parsedNotes.mvp_player_id||proposedMvp;
+      }
+    }catch{}
     const teamPlayers=players;
     const render=()=>{
       const box=document.querySelector('#team-report-events');if(!box)return;
@@ -940,9 +949,14 @@ async function teamMatchesArea(){
       </div>
       <div class="team-event-heading"><div><h4>Eventi della tua squadra</h4><p>Inserisci marcatori, assist e cartellini. L’Admin verificherà tutto prima della pubblicazione.</p></div><div><button class="btn small add-team-event" data-type="goal">+ Gol</button><button class="btn small add-team-event" data-type="assist">+ Assist</button><button class="btn small add-team-event" data-type="yellow">+ Giallo</button><button class="btn small add-team-event" data-type="red">+ Rosso</button></div></div>
       <div id="team-report-events"></div>
-      <div class="field"><label>MVP proposto</label><select class="input" id="team-report-mvp"><option value="">Nessuna proposta</option>${teamPlayers.map(p=>`<option value="${p.id}" ${Number(m.submission_mvp_player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select></div>
-      <div class="field"><label>Note per l’Admin</label><textarea class="input" id="team-report-notes" rows="4">${esc(m.submission_notes||'')}</textarea></div>
-      <div class="team-report-submit"><span>Dopo l’invio il referto resterà in attesa di approvazione.</span><button class="btn primary" id="send-team-report">Invia referto</button></div>
+      <div class="field"><label>MVP proposto</label><select class="input" id="team-report-mvp"><option value="">Nessuna proposta</option>${teamPlayers.map(p=>`<option value="${p.id}" ${Number(proposedMvp)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Note per l’Admin</label><textarea class="input" id="team-report-notes" rows="4">${esc(submissionNotes)}</textarea></div>
+      <div class="team-report-flow">
+        <div><b>1</b><span>La squadra compila</span></div>
+        <div><b>2</b><span>L’Admin verifica</span></div>
+        <div><b>3</b><span>La partita si aggiorna</span></div>
+      </div>
+      <div class="team-report-submit"><span>Dopo l’invio il referto resterà in attesa. Solo l’approvazione dell’Admin renderà ufficiali risultato, eventi e MVP.</span><button class="btn primary" id="send-team-report">Invia all’Admin</button></div>
     </section>`;
     render();
     document.querySelector('#editor').scrollIntoView({behavior:'smooth',block:'start'});
@@ -958,7 +972,13 @@ async function teamMatchesArea(){
     };
   };
 
-  document.querySelectorAll('.submit-team-report').forEach(b=>b.onclick=()=>openReport(matches.find(m=>Number(m.id)===Number(b.dataset.id))));
+  document.querySelectorAll('.submit-team-report').forEach(b=>b.onclick=()=>{
+    const match=matches.find(m=>Number(m.id)===Number(b.dataset.id));
+    if(!match)return;
+    const isFuture=new Date(match.match_date).getTime()>Date.now();
+    if(isFuture&&!confirm('Questa partita risulta ancora in programma. Vuoi comunque compilare il referto adesso?'))return;
+    openReport(match);
+  });
   apply();
 }
 
@@ -1503,7 +1523,10 @@ async function submissions(){
         <span>${Number(r.assists_count)} assist</span>
       </div>
       <div class="report-checks">${checkHtml}</div>
-      ${Number(r.pending_submissions)>0?`<div class="report-submission-note"><strong>Invio ricevuto da ${esc(r.pending_team_name||'squadra')}</strong><span>${fmtDate(r.pending_created_at)}</span></div>`:''}
+      ${Number(r.pending_submissions)>0?`<div class="report-submission-note">
+        <div><strong>Invio ricevuto da ${esc(r.pending_team_name||'squadra')}</strong><span>${fmtDate(r.pending_created_at)}</span></div>
+        <b>Risultato proposto: ${r.pending_home_score??0} – ${r.pending_away_score??0}</b>
+      </div>`:''}
       <div class="report-card-actions">
         <button class="btn primary small open-report" data-id="${r.id}">${r.status==='published'?'Modifica referto':'Compila referto'}</button>
         ${Number(r.pending_submissions)>0?`<button class="btn small approve-submission" data-id="${r.pending_submission_id}">Approva invio</button><button class="btn small danger reject-submission" data-id="${r.pending_submission_id}">Rifiuta</button>`:''}
@@ -1572,7 +1595,7 @@ async function submissions(){
     manageMatches();
   });
   document.querySelectorAll('.approve-submission').forEach(btn=>btn.onclick=async()=>{
-    if(confirm('Approvare questo invio? Il risultato e gli eventi verranno pubblicati.')){
+    if(confirm('Approvare questo referto? Risultato, eventi e MVP diventeranno ufficiali e la partita sarà pubblicata automaticamente.')){
       await api(`admin/submissions/${btn.dataset.id}/approve`,{method:'POST',body:'{}'});
       submissions();
     }
