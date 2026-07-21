@@ -41,31 +41,34 @@ async function uploadMediaFile(file,category,oldUrl='',maxDimension=1400){
   return data.url;
 }
 function mediaPicker({name='media_file',current='',label='Immagine',shape='square'}={}){
-  return `<section class="field full media-picker-field">
-    <div class="media-picker-heading">
-      <div><label>${esc(label)}</label><p>Carica un file direttamente dal dispositivo.</p></div>
-      <span class="media-format-badge">PNG · JPG · WEBP</span>
+  return `<div class="pl-upload-block">
+    <div class="pl-upload-title">
+      <div>
+        <strong>${esc(label)}</strong>
+        <span>Carica un file direttamente dal dispositivo.</span>
+      </div>
+      <em>PNG · JPG · WEBP</em>
     </div>
-    <div class="media-picker ${shape}">
-      <div class="media-preview">${current?`<img src="${esc(current)}" alt="Anteprima">`:`<div class="media-placeholder"><b>+</b><span>Nessuna immagine</span></div>`}</div>
-      <div class="media-picker-content">
-        <strong>${current?'Immagine attuale':'Carica una nuova immagine'}</strong>
-        <p>${shape==='logo'?'Per gli stemmi è consigliato un file quadrato con sfondo trasparente.':'Usa un’immagine nitida e ben centrata.'}</p>
-        <div class="media-picker-actions">
-          <label class="btn media-file-button">Scegli file<input type="file" name="${esc(name)}" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label>
+    <div class="pl-upload-body ${shape}">
+      <div class="pl-upload-preview">${current?`<img src="${esc(current)}" alt="Anteprima">`:`<div class="pl-upload-empty"><b>+</b><span>Nessuna immagine</span></div>`}</div>
+      <div class="pl-upload-info">
+        <h4>${current?'Immagine attuale':'Nessuna immagine caricata'}</h4>
+        <p>${shape==='logo'?'Per lo stemma usa preferibilmente un file quadrato con sfondo trasparente.':'Usa una foto nitida e ben centrata.'}</p>
+        <div class="pl-upload-actions">
+          <label class="btn pl-file-button">Scegli file<input type="file" name="${esc(name)}" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label>
           ${current?'<button class="btn small danger remove-media" type="button">Rimuovi immagine</button>':''}
         </div>
-        <small>Dimensione massima 5 MB. Il file verrà ottimizzato automaticamente.</small>
+        <small>Massimo 5 MB. Il file verrà ottimizzato automaticamente.</small>
       </div>
     </div>
     <input type="hidden" name="existing_media_url" value="${esc(current)}">
     <input type="hidden" name="remove_media" value="0">
-  </section>`;
+  </div>`;
 }
 function bindMediaPicker(form){
-  form.querySelectorAll('.media-picker-field').forEach(field=>{
+  form.querySelectorAll('.pl-upload-block').forEach(field=>{
     const input=field.querySelector('input[type="file"]');
-    const preview=field.querySelector('.media-preview');
+    const preview=field.querySelector('.pl-upload-preview');
     const remove=field.querySelector('.remove-media');
     const removeFlag=field.querySelector('[name="remove_media"]');
     input?.addEventListener('change',()=>{
