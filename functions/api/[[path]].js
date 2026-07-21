@@ -10,11 +10,19 @@ const safeText = (value) => typeof value === 'string' ? value.trim() : value;
 async function ensureAuthSchema(env) {
   // Compatibility layer: the original database accepts only admin/team/fan.
   // Extended application roles are stored separately, without destructive migrations.
+  // Create the authentication tables before creating indexes.
+  // Existing Prime League databases may only contain the original `users` table.
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_roles (
       user_id INTEGER PRIMARY KEY,
       role TEXT NOT NULL CHECK(role IN ('super_admin','organizer','team_manager','referee','fan')),
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
       token TEXT PRIMARY KEY,
@@ -24,8 +32,21 @@ async function ensureAuthSchema(env) {
       created_by_user_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      details TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`)
+  ]);
+
+  await env.DB.batch([
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id)'),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)')
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_auth_roles_role ON auth_roles(role)')
   ]);
 }
 
