@@ -1,68 +1,19 @@
-# Prime League — configurazione accesso Admin
+# Configurazione accessi Prime League
 
-## 1. Aggiorna il progetto
-Carica tutti i file della ZIP su GitHub e attendi il deploy di Cloudflare Pages.
+La piattaforma usa tre profili:
 
-## 2. Imposta il token di prima configurazione
-In Cloudflare apri **Workers & Pages → progetto Prime League → Settings → Variables and Secrets**.
-Crea la variabile segreta:
+- **Admin**: controllo completo;
+- **Squadra**: accesso limitato alla squadra associata;
+- **Arbitro**: inserimento e invio dei referti.
 
-- `SETUP_TOKEN`: una stringa lunga e casuale, diversa da password personali.
+## Cloudflare
 
-La variabile `ALLOW_RESET_LINK_RESPONSE` deve rimanere assente o `false` in produzione. Il recupero password viene gestito dal Super Admin attraverso la pagina Account.
+Mantieni configurati come segreti `SESSION_SECRET` e `SETUP_TOKEN`, quindi esegui un nuovo deploy.
 
-## 3A. Database nuovo
-Esegui lo schema completo:
+## Primo Admin
 
-```bash
-npx wrangler d1 execute prime-league-db --remote --file=schema.sql
-```
+Apri `https://TUO-DOMINIO/#/setup`, inserisci il `SETUP_TOKEN` e crea l’account. L’utente viene salvato direttamente con ruolo `admin`, compatibile con la tabella esistente.
 
-Sostituisci `prime-league-db` con il nome del database indicato in `wrangler.toml`, se diverso.
+## Accesso
 
-## 3B. Database già esistente
-Esegui solamente la migrazione:
-
-```bash
-npx wrangler d1 execute prime-league-db --remote --file=migrations/0002_auth_roles.sql
-```
-
-La migrazione converte automaticamente:
-
-- `admin` → `super_admin`
-- `team` → `team_manager`
-
-## 4. Crea il primo Super Admin
-Apri:
-
-```text
-https://TUO-DOMINIO/#/setup
-```
-
-Inserisci il valore di `SETUP_TOKEN`, nome, username, email e una password sicura.
-La configurazione può essere eseguita una sola volta.
-
-## 5. Accedi
-Apri:
-
-```text
-https://TUO-DOMINIO/#/login
-```
-
-Dopo il login sarai reindirizzato alla dashboard:
-
-```text
-https://TUO-DOMINIO/#/dashboard
-```
-
-## Ruoli disponibili
-
-- **Super Admin**: accesso completo, inclusa gestione account e link di recupero.
-- **Organizzatore**: squadre, giocatori, stagioni, partite, referti, sponsor, news e votazioni.
-- **Team Manager**: rosa, gare della propria squadra, referti e sponsor del club.
-- **Arbitro**: partite e invio referti.
-- **Tifoso**: accesso alle votazioni pubbliche.
-
-## Recupero password
-
-Il Super Admin apre **Dashboard → Account**, preme **Link reset** e invia privatamente il collegamento all’utente. Il link scade dopo 30 minuti e può essere usato una sola volta. Al cambio password tutte le vecchie sessioni vengono revocate.
+Apri `https://TUO-DOMINIO/#/login`. Dalla voce **Account**, l’Admin può creare gli accessi Squadra e Arbitro.

@@ -15,12 +15,31 @@ CREATE TABLE IF NOT EXISTS users (
   FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE SET NULL
 );
 
+
+CREATE TABLE IF NOT EXISTS auth_roles (
+  user_id INTEGER PRIMARY KEY,
+  role TEXT NOT NULL CHECK(role IN ('team_manager','referee','fan')),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS teams (
@@ -198,6 +217,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id);
 CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season_id);
 CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(match_date);
