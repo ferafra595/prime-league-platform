@@ -410,9 +410,79 @@ async function manageSeasons(){
 
 async function loadTeams(){state.teams=(await api('public/teams')).teams}
 async function adminTeams(){
-  const d=await api('admin/teams');
-  const rows=d.teams.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.short_name||'—')}</td><td>${esc(t.coach_name||'—')}</td><td>${t.is_active?'Attiva':'Disattiva'}</td><td><div class="admin-row-actions"><button class="btn small edit-team" data-id="${t.id}">Modifica</button><button class="btn small danger delete-team" data-id="${t.id}">Elimina</button></div></td></tr>`).join('');
-  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Squadre</h2><p>Crea, modifica o elimina tutte le squadre della piattaforma.</p></div><button class="btn primary" id="new-team">Nuova squadra</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Sigla</th><th>Allenatore</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows||'<tr><td colspan="5">Nessuna squadra.</td></tr>'}</tbody></table></div>`,'teams'),''); bindLogout();
+  const [teamsData,playersData]=await Promise.all([
+    api('admin/teams'),
+    api('admin/players').catch(()=>({players:[]}))
+  ]);
+  const teams=[...(teamsData.teams||[])];
+  const players=playersData.players||[];
+
+  if(!document.querySelector('link[data-prime-teams-admin]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/teams-admin.css';
+    link.dataset.primeTeamsAdmin='1';
+    document.head.appendChild(link);
+  }
+
+  const playerCount=id=>players.filter(p=>Number(p.team_id)===Number(id)&&Number(p.is_active)!==0).length;
+  const activeCount=teams.filter(t=>Number(t.is_active)!==0).length;
+  const withCoach=teams.filter(t=>String(t.coach_name||'').trim()).length;
+
+  const teamCard=t=>`<article class="team-admin-card"
+    data-id="${t.id}"
+    data-status="${Number(t.is_active)!==0?'active':'inactive'}"
+    data-name="${esc((t.name||'').toLowerCase())}"
+    data-search="${esc(`${t.name||''} ${t.short_name||''} ${t.coach_name||''} ${t.manager_name||''}`.toLowerCase())}"
+    data-players="${playerCount(t.id)}">
+    <div class="team-admin-accent" style="--primary:${esc(t.primary_color||'#0b2348')};--secondary:${esc(t.secondary_color||'#ffffff')}"></div>
+    <div class="team-admin-card-head">
+      <div class="team-admin-logo">${t.logo_url?`<img src="${esc(t.logo_url)}" alt="${esc(t.name)}">`:`<span>${esc(initials(t.name))}</span>`}</div>
+      <div class="team-admin-title">
+        <span>${esc(t.short_name||'Nessuna sigla')}</span>
+        <h3>${esc(t.name)}</h3>
+        <div class="team-admin-colors"><i style="background:${esc(t.primary_color||'#0b2348')}"></i><i style="background:${esc(t.secondary_color||'#ffffff')}"></i></div>
+      </div>
+      <span class="team-admin-status ${Number(t.is_active)!==0?'active':'inactive'}">${Number(t.is_active)!==0?'Attiva':'Non attiva'}</span>
+    </div>
+    <div class="team-admin-details">
+      <div><span>Allenatore</span><strong>${esc(t.coach_name||'Da definire')}</strong></div>
+      <div><span>Responsabile</span><strong>${esc(t.manager_name||'Da definire')}</strong></div>
+      <div><span>Giocatori attivi</span><strong>${playerCount(t.id)}</strong></div>
+    </div>
+    <div class="team-admin-actions">
+      <button class="btn small edit-team" data-id="${t.id}">Modifica</button>
+      <button class="btn small team-roster" data-id="${t.id}">Apri rosa</button>
+      <button class="btn small danger delete-team" data-id="${t.id}">Elimina</button>
+    </div>
+  </article>`;
+
+  set(dashLayout(`<div class="admin-page-head teams-admin-head">
+      <div><span class="eyebrow">Gestione completa</span><h2>Squadre</h2><p>Gestisci identità, staff, colori, stemmi e rose delle squadre.</p></div>
+      <button class="btn primary" id="new-team">Nuova squadra</button>
+    </div>
+    <div id="editor"></div>
+
+    <section class="teams-admin-summary">
+      <div><span>Squadre totali</span><b>${teams.length}</b></div>
+      <div><span>Attive</span><b>${activeCount}</b></div>
+      <div><span>Non attive</span><b>${teams.length-activeCount}</b></div>
+      <div><span>Con allenatore</span><b>${withCoach}</b></div>
+    </section>
+
+    <section class="teams-admin-toolbar">
+      <div class="field teams-search-field"><label>Cerca squadra</label><input class="input" id="teams-search" placeholder="Nome, sigla, allenatore o responsabile"></div>
+      <div class="field"><label>Stato</label><select class="input" id="teams-status"><option value="">Tutte</option><option value="active">Attive</option><option value="inactive">Non attive</option></select></div>
+      <div class="field"><label>Ordina per</label><select class="input" id="teams-sort"><option value="name">Nome</option><option value="players">Numero giocatori</option><option value="status">Stato</option></select></div>
+      <button class="btn small" id="teams-reset" type="button">Azzera filtri</button>
+    </section>
+
+    <div class="teams-results-bar"><span id="teams-result-count">${teams.length} squadre</span><span>Clicca “Apri rosa” per vedere i giocatori collegati</span></div>
+
+    <section class="teams-admin-grid" id="teams-admin-grid">${teams.map(teamCard).join('')||'<div class="teams-admin-empty">Nessuna squadra presente.</div>'}</section>
+    <div class="teams-admin-empty" id="teams-filter-empty" hidden>Nessuna squadra corrisponde ai filtri selezionati.</div>`,'teams'),'');
+  bindLogout();
+
   const openForm=(t={})=>showForm('editor',teamForm(t),async(f,form)=>{
     f.is_active=f.is_active==='1'?1:0;
     const existing=form.querySelector('[name="existing_media_url"]')?.value||'';
@@ -424,9 +494,61 @@ async function adminTeams(){
     await api(t.id?`admin/teams/${t.id}`:'admin/teams',{method:t.id?'PUT':'POST',body:JSON.stringify(f)});
     adminTeams();
   });
+
+  const cards=[...document.querySelectorAll('.team-admin-card')];
+  const applyFilters=()=>{
+    const search=(document.querySelector('#teams-search').value||'').toLowerCase().trim();
+    const status=document.querySelector('#teams-status').value;
+    const sort=document.querySelector('#teams-sort').value;
+    const visible=cards.filter(card=>{
+      const show=(!search||card.dataset.search.includes(search))&&(!status||card.dataset.status===status);
+      card.hidden=!show;
+      return show;
+    });
+
+    visible.sort((a,b)=>{
+      if(sort==='players')return Number(b.dataset.players)-Number(a.dataset.players)||a.dataset.name.localeCompare(b.dataset.name);
+      if(sort==='status')return a.dataset.status.localeCompare(b.dataset.status)||a.dataset.name.localeCompare(b.dataset.name);
+      return a.dataset.name.localeCompare(b.dataset.name);
+    });
+
+    const grid=document.querySelector('#teams-admin-grid');
+    visible.forEach(card=>grid.appendChild(card));
+    cards.filter(card=>card.hidden).forEach(card=>grid.appendChild(card));
+    document.querySelector('#teams-result-count').textContent=`${visible.length} ${visible.length===1?'squadra':'squadre'}`;
+    document.querySelector('#teams-filter-empty').hidden=visible.length>0;
+  };
+
+  document.querySelector('#teams-search').addEventListener('input',applyFilters);
+  document.querySelector('#teams-status').addEventListener('change',applyFilters);
+  document.querySelector('#teams-sort').addEventListener('change',applyFilters);
+  document.querySelector('#teams-reset').onclick=()=>{
+    document.querySelector('#teams-search').value='';
+    document.querySelector('#teams-status').value='';
+    document.querySelector('#teams-sort').value='name';
+    applyFilters();
+  };
+
   document.querySelector('#new-team').onclick=()=>openForm();
-  document.querySelectorAll('.edit-team').forEach(b=>b.onclick=()=>openForm(d.teams.find(x=>Number(x.id)===Number(b.dataset.id))));
-  document.querySelectorAll('.delete-team').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questa squadra? Verranno rimossi anche i dati collegati compatibili.')){await api(`admin/teams/${b.dataset.id}?hard=1`,{method:'DELETE'});adminTeams()}});
+  document.querySelectorAll('.edit-team').forEach(btn=>btn.onclick=()=>openForm(teams.find(x=>Number(x.id)===Number(btn.dataset.id))));
+  document.querySelectorAll('.team-roster').forEach(btn=>btn.onclick=()=>{
+    const team=teams.find(x=>Number(x.id)===Number(btn.dataset.id));
+    location.hash=`#/dashboard/players`;
+    setTimeout(()=>{
+      const select=document.querySelector('#players-team');
+      if(select){select.value=String(team.id);select.dispatchEvent(new Event('change'))}
+    },250);
+  });
+  document.querySelectorAll('.delete-team').forEach(btn=>btn.onclick=async()=>{
+    const team=teams.find(x=>Number(x.id)===Number(btn.dataset.id));
+    const count=playerCount(btn.dataset.id);
+    if(confirm(`Eliminare definitivamente ${team?.name||'questa squadra'}? Verranno eliminati anche ${count} giocatori e tutte le partite collegate.`)){
+      await api(`admin/teams/${btn.dataset.id}?hard=1`,{method:'DELETE'});
+      adminTeams();
+    }
+  });
+
+  applyFilters();
 }
 function teamForm(t={}){return `<div class="admin-editor-card"><h3>${t.id?'Modifica squadra':'Nuova squadra'}</h3><form class="form-grid data-form"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(t.name||'')}" required></div><div class="field"><label>Sigla</label><input class="input" name="short_name" value="${esc(t.short_name||'')}"></div><div class="field"><label>Responsabile</label><input class="input" name="manager_name" value="${esc(t.manager_name||'')}"></div><div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(t.coach_name||'')}"></div><div class="field"><label>Colore principale</label><input class="input" type="color" name="primary_color" value="${esc(t.primary_color||'#081a36')}"></div><div class="field"><label>Colore secondario</label><input class="input" type="color" name="secondary_color" value="${esc(t.secondary_color||'#ffffff')}"></div>${mediaPicker({name:'logo_file',current:t.logo_url||'',label:'Stemma squadra',shape:'logo'})}<div class="field full"><label>Descrizione</label><textarea class="input" name="description">${esc(t.description||'')}</textarea></div>${t.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${t.is_active?'checked':''}> Squadra attiva</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${t.id?'Salva modifiche':'Crea squadra'}</button></div></form></div>`}
 function showForm(id,html,handler){document.querySelector('#'+id).innerHTML=html;const form=document.querySelector('#'+id+' form');if(!form)return;bindMediaPicker(form);form.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await handler(data,e.target)}catch(err){alert(err.message)}}}
