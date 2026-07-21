@@ -41,19 +41,26 @@ async function uploadMediaFile(file,category,oldUrl='',maxDimension=1400){
   return data.url;
 }
 function mediaPicker({name='media_file',current='',label='Immagine',shape='square'}={}){
-  return `<div class="field full media-picker-field">
-    <label>${esc(label)}</label>
+  return `<section class="field full media-picker-field">
+    <div class="media-picker-heading">
+      <div><label>${esc(label)}</label><p>Carica un file direttamente dal dispositivo.</p></div>
+      <span class="media-format-badge">PNG · JPG · WEBP</span>
+    </div>
     <div class="media-picker ${shape}">
       <div class="media-preview">${current?`<img src="${esc(current)}" alt="Anteprima">`:`<div class="media-placeholder"><b>+</b><span>Nessuna immagine</span></div>`}</div>
-      <div class="media-picker-actions">
-        <label class="btn media-file-button">Scegli file<input type="file" name="${esc(name)}" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label>
-        ${current?'<button class="btn small danger remove-media" type="button">Rimuovi</button>':''}
-        <small>PNG, JPG o WEBP · massimo 5 MB</small>
+      <div class="media-picker-content">
+        <strong>${current?'Immagine attuale':'Carica una nuova immagine'}</strong>
+        <p>${shape==='logo'?'Per gli stemmi è consigliato un file quadrato con sfondo trasparente.':'Usa un’immagine nitida e ben centrata.'}</p>
+        <div class="media-picker-actions">
+          <label class="btn media-file-button">Scegli file<input type="file" name="${esc(name)}" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label>
+          ${current?'<button class="btn small danger remove-media" type="button">Rimuovi immagine</button>':''}
+        </div>
+        <small>Dimensione massima 5 MB. Il file verrà ottimizzato automaticamente.</small>
       </div>
     </div>
     <input type="hidden" name="existing_media_url" value="${esc(current)}">
     <input type="hidden" name="remove_media" value="0">
-  </div>`;
+  </section>`;
 }
 function bindMediaPicker(form){
   form.querySelectorAll('.media-picker-field').forEach(field=>{
