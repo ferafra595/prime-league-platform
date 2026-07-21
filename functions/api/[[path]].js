@@ -1036,45 +1036,122 @@ async function route(request, env, path) {
         .bind(d.admin_note||'',id).run();
 
       const approved=(await env.DB.prepare(`SELECT s.*,COALESCE(ar.role,u.role) source_role
-        FROM match_submissions s JOIN users u ON u.id=s.submitted_by_user_id LEFT JOIN auth_roles ar ON ar.user_id=u.id
-        WHERE s.match_id=? AND s.status='approved' ORDER BY s.reviewed_at,s.created_at`).bind(s.match_id).all()).results;
+        FROM match_submissions s
+        JOIN users u ON u.id=s.submitted_by_user_id
+        LEFT JOIN auth_roles ar ON ar.user_id=u.id
+        WHERE s.match_id=? AND s.status='approved'
+        ORDER BY COALESCE(s.reviewed_at,s.created_at),s.created_at,s.id`).bind(s.match_id).all()).results;
 
-      const allEvents=[];
-      let officialHome=Number(s.home_score),officialAway=Number(s.away_score),officialMvp=null;
+      // RESULT:
+      // Never sum scores. Use the most frequently reported score.
+      // If two scorelines have the same number of votes, the latest approved report wins.
+      const resultVotes=new Map();
+      approved.forEach((sub,index)=>{
+        const key=`${Number(sub.home_score)}:${Number(sub.away_score)}`;
+        const current=resultVotes.get(key)||{count:0,lastIndex:-1,home:Number(sub.home_score),away:Number(sub.away_score)};
+        current.count++;
+        current.lastIndex=index;
+        resultVotes.set(key,current);
+      });
+      const officialResult=[...resultVotes.values()].sort((a,b)=>b.count-a.count||b.lastIndex-a.lastIndex)[0]||{
+        home:Number(s.home_score),away:Number(s.away_score)
+      };
 
+      // MVP:
+      // Use the most frequently proposed MVP. On a tie, use the latest approved proposal.
+      const mvpVotes=new Map();
+      approved.forEach((sub,index)=>{
+        let meta={};
+        try{meta=JSON.parse(sub.notes||'{}')||{}}catch{meta={}}
+        const playerId=meta.mvp_player_id?Number(meta.mvp_player_id):null;
+        if(!playerId)return;
+        const current=mvpVotes.get(playerId)||{count:0,lastIndex:-1,playerId};
+        current.count++;
+        current.lastIndex=index;
+        mvpVotes.set(playerId,current);
+      });
+      const officialMvp=[...mvpVotes.values()].sort((a,b)=>b.count-a.count||b.lastIndex-a.lastIndex)[0]?.playerId||null;
+
+      // EVENTS:
+      // Identical reports are not cumulative.
+      // A unique event is identified by team + player + event type.
+      // Across reports, keep the highest reported quantity, never the sum.
+      const eventMap=new Map();
       for(const sub of approved){
-        let meta={};try{meta=JSON.parse(sub.notes||'{}')||{}}catch{meta={text:sub.notes||''}}
-        if(meta.mvp_player_id)officialMvp=Number(meta.mvp_player_id);
-        let events=[];try{events=JSON.parse(sub.events_json||'[]')||[]}catch{}
+        let events=[];
+        try{events=JSON.parse(sub.events_json||'[]')||[]}catch{}
         for(const e of events){
           if(!['goal','assist','yellow','red'].includes(e.event_type))continue;
-          allEvents.push({...e,source_submission_id:sub.id});
+          const teamId=Number(e.team_id);
+          const playerId=e.player_id?Number(e.player_id):null;
+          if(!teamId||!playerId)continue;
+          const key=`${teamId}:${playerId}:${e.event_type}`;
+          const quantity=Math.max(1,Number(e.quantity||1));
+          const previous=eventMap.get(key);
+          if(!previous||quantity>previous.quantity){
+            eventMap.set(key,{
+              team_id:teamId,
+              player_id:playerId,
+              event_type:e.event_type,
+              quantity
+            });
+          }
         }
       }
 
       await env.DB.prepare("UPDATE matches SET home_score=?,away_score=?,status='published',mvp_player_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-        .bind(officialHome,officialAway,officialMvp,s.match_id).run();
+        .bind(officialResult.home,officialResult.away,officialMvp,s.match_id).run();
+
       await env.DB.prepare(`INSERT INTO match_schedule_meta(match_id,phase,schedule_status,manually_modified,notes,updated_at)
         VALUES(?,'regular','completed',1,'Referto approvato',CURRENT_TIMESTAMP)
-        ON CONFLICT(match_id) DO UPDATE SET schedule_status='completed',manually_modified=1,updated_at=CURRENT_TIMESTAMP`).bind(s.match_id).run();
+        ON CONFLICT(match_id) DO UPDATE SET schedule_status='completed',manually_modified=1,updated_at=CURRENT_TIMESTAMP`)
+        .bind(s.match_id).run();
 
       await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(s.match_id).run();
-      const teamIds=[...new Set(allEvents.map(e=>Number(e.team_id)).filter(Boolean))];
-      for(const teamId of teamIds){
-        const goals=[];
-        allEvents.filter(e=>e.event_type==='goal'&&Number(e.team_id)===teamId).forEach(e=>{
-          for(let n=0;n<Math.max(1,Number(e.quantity||1));n++)goals.push({team_id:teamId,player_id:Number(e.player_id),assist_player_id:null,event_type:'goal',quantity:1});
-        });
-        const assists=[];
-        allEvents.filter(e=>e.event_type==='assist'&&Number(e.team_id)===teamId).forEach(e=>{
-          for(let n=0;n<Math.max(1,Number(e.quantity||1));n++)assists.push(Number(e.player_id));
-        });
-        assists.slice(0,goals.length).forEach((playerId,index)=>goals[index].assist_player_id=playerId);
-        for(const g of goals)await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,1)').bind(s.match_id,g.team_id,g.player_id,g.assist_player_id,'goal').run();
 
-        for(const e of allEvents.filter(e=>['yellow','red'].includes(e.event_type)&&Number(e.team_id)===teamId)){
-          await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)')
-            .bind(s.match_id,teamId,e.player_id?Number(e.player_id):null,null,e.event_type,Math.max(1,Number(e.quantity||1))).run();
+      const officialEvents=[...eventMap.values()];
+      const teamIds=[...new Set(officialEvents.map(e=>e.team_id))];
+
+      for(const teamId of teamIds){
+        // Goals and assists are stored using the existing DB structure:
+        // assist_player_id belongs to a goal row.
+        const goalUnits=[];
+        officialEvents
+          .filter(e=>e.event_type==='goal'&&e.team_id===teamId)
+          .forEach(e=>{
+            for(let n=0;n<e.quantity;n++){
+              goalUnits.push({
+                team_id:teamId,
+                player_id:e.player_id,
+                assist_player_id:null
+              });
+            }
+          });
+
+        const assistUnits=[];
+        officialEvents
+          .filter(e=>e.event_type==='assist'&&e.team_id===teamId)
+          .forEach(e=>{
+            for(let n=0;n<e.quantity;n++)assistUnits.push(e.player_id);
+          });
+
+        // Pair assists with goals without duplicating them.
+        assistUnits.slice(0,goalUnits.length).forEach((playerId,index)=>{
+          goalUnits[index].assist_player_id=playerId;
+        });
+
+        for(const goal of goalUnits){
+          await env.DB.prepare(`INSERT INTO match_events
+            (match_id,team_id,player_id,assist_player_id,event_type,quantity)
+            VALUES(?,?,?,?, 'goal',1)`)
+            .bind(s.match_id,goal.team_id,goal.player_id,goal.assist_player_id).run();
+        }
+
+        for(const e of officialEvents.filter(e=>['yellow','red'].includes(e.event_type)&&e.team_id===teamId)){
+          await env.DB.prepare(`INSERT INTO match_events
+            (match_id,team_id,player_id,assist_player_id,event_type,quantity)
+            VALUES(?,?,?,?,?,?)`)
+            .bind(s.match_id,e.team_id,e.player_id,null,e.event_type,e.quantity).run();
         }
       }
     }
