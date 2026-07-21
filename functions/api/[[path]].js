@@ -860,7 +860,13 @@ async function route(request, env, path) {
   if (path === 'team/matches') {
     const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied;
     const q=hasRole(user,'referee')
-      ? env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`)
+      ? env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
+        (SELECT s.status FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_status,
+        (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
+        (SELECT s.away_score FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_away_score,
+        (SELECT s.events_json FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_events_json,
+        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`).bind(user.id,user.id,user.id,user.id,user.id)
       : env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
         (SELECT s.status FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_status,
         (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
@@ -873,6 +879,15 @@ async function route(request, env, path) {
         .bind(user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id);
     const rows=await q.all(); return json({matches:rows.results});
   }
+  if (path.match(/^referee\/matches\/\d+\/report-data$/) && method==='GET') {
+    const denied=requireAnyRole(user,'referee'); if(denied)return denied;
+    const id=Number(path.split('/')[2]);
+    const match=await env.DB.prepare('SELECT * FROM matches WHERE id=?').bind(id).first();
+    if(!match)return json({error:'Partita non trovata'},404);
+    const players=await env.DB.prepare(`SELECT id,team_id,first_name,last_name,shirt_number,role FROM players WHERE team_id IN (?,?) AND is_active=1 ORDER BY team_id,last_name`).bind(match.home_team_id,match.away_team_id).all();
+    return json({match,players:players.results});
+  }
+
   if (path === 'team/submissions' && method==='POST') {
     const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied; const d=await body(request);
     const match=hasRole(user,'referee')
@@ -880,7 +895,7 @@ async function route(request, env, path) {
       : await env.DB.prepare('SELECT * FROM matches WHERE id=? AND (home_team_id=? OR away_team_id=?)').bind(Number(d.match_id),user.team_id,user.team_id).first();
     if(!match)return json({error:'Partita non valida'},400);
     const submissionTeamId=hasRole(user,'referee')?match.home_team_id:user.team_id;
-    if(hasRole(user,'team_manager'))await env.DB.prepare("UPDATE match_submissions SET status='superseded' WHERE match_id=? AND team_id=? AND status IN ('pending','rejected')").bind(match.id,submissionTeamId).run();
+    await env.DB.prepare("UPDATE match_submissions SET status='superseded' WHERE match_id=? AND submitted_by_user_id=? AND status IN ('pending','rejected')").bind(match.id,user.id).run();
     const notesPayload=JSON.stringify({text:d.notes||'',mvp_player_id:d.mvp_player_id?Number(d.mvp_player_id):null});
     const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),notesPayload).run();
     await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201);
@@ -997,36 +1012,71 @@ async function route(request, env, path) {
     return json({reports:rows.results,seasons:seasons.results});
   }
 
+  if (path.match(/^admin\/reports\/\d+\/submissions$/) && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const matchId=Number(path.split('/')[2]);
+    const match=await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.id=?`).bind(matchId).first();
+    if(!match)return json({error:'Partita non trovata'},404);
+    const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,u.display_name submitted_by,COALESCE(ar.role,u.role) source_role
+      FROM match_submissions s
+      LEFT JOIN teams t ON t.id=s.team_id
+      JOIN users u ON u.id=s.submitted_by_user_id
+      LEFT JOIN auth_roles ar ON ar.user_id=u.id
+      WHERE s.match_id=? ORDER BY s.created_at DESC`).bind(matchId).all();
+    return json({match,submissions:rows.results.map(x=>({...x,source_role:ROLE_ALIASES[x.source_role]||x.source_role}))});
+  }
+
   if (path === 'admin/submissions') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,m.round_name,ht.name home_name,at.name away_name,u.display_name submitted_by FROM match_submissions s JOIN teams t ON t.id=s.team_id JOIN users u ON u.id=s.submitted_by_user_id JOIN matches m ON m.id=s.match_id JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END,s.created_at DESC`).all(); return json({submissions:rows.results});
   }
   if (path.match(/^admin\/submissions\/\d+\/(approve|reject)$/) && method==='POST') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const parts=path.split('/'); const id=Number(parts[2]); const action=parts[3]; const d=await body(request); const s=await env.DB.prepare('SELECT * FROM match_submissions WHERE id=?').bind(id).first(); if(!s)return json({error:'Invio non trovato'},404);
     if(action==='approve') {
-      let submissionMeta={};
-      try{submissionMeta=JSON.parse(s.notes||'{}')||{}}catch{submissionMeta={text:s.notes||''}}
-      const proposedMvp=submissionMeta.mvp_player_id?Number(submissionMeta.mvp_player_id):null;
-
       await env.DB.prepare("UPDATE match_submissions SET status='approved',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?")
         .bind(d.admin_note||'',id).run();
 
-      await env.DB.prepare("UPDATE matches SET home_score=?,away_score=?,status='published',mvp_player_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-        .bind(Number(s.home_score),Number(s.away_score),proposedMvp,s.match_id).run();
+      const approved=(await env.DB.prepare(`SELECT s.*,COALESCE(ar.role,u.role) source_role
+        FROM match_submissions s JOIN users u ON u.id=s.submitted_by_user_id LEFT JOIN auth_roles ar ON ar.user_id=u.id
+        WHERE s.match_id=? AND s.status='approved' ORDER BY s.reviewed_at,s.created_at`).bind(s.match_id).all()).results;
 
-      await env.DB.prepare(`INSERT INTO match_schedule_meta(match_id,phase,schedule_status,manually_modified,notes,updated_at)
-        VALUES(?,'regular','completed',1,'Referto approvato',CURRENT_TIMESTAMP)
-        ON CONFLICT(match_id) DO UPDATE SET schedule_status='completed',manually_modified=1,updated_at=CURRENT_TIMESTAMP`)
-        .bind(s.match_id).run();
+      const allEvents=[];
+      let officialHome=Number(s.home_score),officialAway=Number(s.away_score),officialMvp=null;
 
-      const events=JSON.parse(s.events_json||'[]');
-      await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(s.match_id).run();
-      for(const e of events){
-        await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)')
-          .bind(s.match_id,Number(e.team_id),e.player_id?Number(e.player_id):null,e.assist_player_id?Number(e.assist_player_id):null,e.event_type,Number(e.quantity||1)).run();
+      for(const sub of approved){
+        let meta={};try{meta=JSON.parse(sub.notes||'{}')||{}}catch{meta={text:sub.notes||''}}
+        if(meta.mvp_player_id)officialMvp=Number(meta.mvp_player_id);
+        let events=[];try{events=JSON.parse(sub.events_json||'[]')||[]}catch{}
+        for(const e of events){
+          if(!['goal','assist','yellow','red'].includes(e.event_type))continue;
+          allEvents.push({...e,source_submission_id:sub.id});
+        }
       }
 
-      await env.DB.prepare("UPDATE match_submissions SET status='superseded' WHERE match_id=? AND id!=? AND status='pending'")
-        .bind(s.match_id,id).run();
+      await env.DB.prepare("UPDATE matches SET home_score=?,away_score=?,status='published',mvp_player_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+        .bind(officialHome,officialAway,officialMvp,s.match_id).run();
+      await env.DB.prepare(`INSERT INTO match_schedule_meta(match_id,phase,schedule_status,manually_modified,notes,updated_at)
+        VALUES(?,'regular','completed',1,'Referto approvato',CURRENT_TIMESTAMP)
+        ON CONFLICT(match_id) DO UPDATE SET schedule_status='completed',manually_modified=1,updated_at=CURRENT_TIMESTAMP`).bind(s.match_id).run();
+
+      await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(s.match_id).run();
+      const teamIds=[...new Set(allEvents.map(e=>Number(e.team_id)).filter(Boolean))];
+      for(const teamId of teamIds){
+        const goals=[];
+        allEvents.filter(e=>e.event_type==='goal'&&Number(e.team_id)===teamId).forEach(e=>{
+          for(let n=0;n<Math.max(1,Number(e.quantity||1));n++)goals.push({team_id:teamId,player_id:Number(e.player_id),assist_player_id:null,event_type:'goal',quantity:1});
+        });
+        const assists=[];
+        allEvents.filter(e=>e.event_type==='assist'&&Number(e.team_id)===teamId).forEach(e=>{
+          for(let n=0;n<Math.max(1,Number(e.quantity||1));n++)assists.push(Number(e.player_id));
+        });
+        assists.slice(0,goals.length).forEach((playerId,index)=>goals[index].assist_player_id=playerId);
+        for(const g of goals)await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,1)').bind(s.match_id,g.team_id,g.player_id,g.assist_player_id,'goal').run();
+
+        for(const e of allEvents.filter(e=>['yellow','red'].includes(e.event_type)&&Number(e.team_id)===teamId)){
+          await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)')
+            .bind(s.match_id,teamId,e.player_id?Number(e.player_id):null,null,e.event_type,Math.max(1,Number(e.quantity||1))).run();
+        }
+      }
     }
     else await env.DB.prepare("UPDATE match_submissions SET status='rejected',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").bind(d.admin_note||'',id).run(); await audit(env,user.id,action,'match_submission',id,d); return json({ok:true});
   }
