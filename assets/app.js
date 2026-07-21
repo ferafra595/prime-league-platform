@@ -354,23 +354,141 @@ async function manageCalendar(){
   const isAdmin=['super_admin','organizer'].includes(state.user.role);
   const endpoint=isAdmin?'admin/matches':'team/matches';
   const d=await api(endpoint);
+  const matches=[...(d.matches||[])].sort((a,b)=>new Date(a.match_date)-new Date(b.match_date));
   const statusLabels={scheduled:'In programma',postponed:'Rinviata',suspended:'Sospesa',recovery:'Da recuperare',cancelled:'Annullata',completed:'Conclusa'};
   const phaseLabels={regular:'Regular season',playoff:'Playoff',semifinal:'Semifinale',final:'Finale'};
   const seasonOptions=(d.seasons||[]).map(s=>`<option value="${s.id}" ${s.is_current?'selected':''}>${esc(s.name)}</option>`).join('');
-  const cards=(d.matches||[]).map(m=>`<article class="calendar-match-card"><div class="calendar-match-top"><span class="viz-badge">${esc(phaseLabels[m.phase]||m.phase||'Regular season')}</span><span class="calendar-status status-${esc(m.schedule_status||'scheduled')}">${esc(statusLabels[m.schedule_status]||m.schedule_status||'In programma')}</span></div><small>${esc(m.round_name||'Prime League')} · ${fmtDate(m.match_date)}</small><h3>${esc(m.home_name)} <b>${m.status==='published'?`${m.home_score}-${m.away_score}`:'vs'}</b> ${esc(m.away_name)}</h3><p>${esc(m.venue||'Campo da definire')}</p>${isAdmin?`<button class="btn small edit-match" data-id="${m.id}">Modifica / riprogramma</button>`:''}${state.user.role==='team_manager'&&m.status!=='published'?`<button class="btn primary submit-match" data-id="${m.id}">Invia referto</button>`:''}</article>`).join('');
-  const adminTools=isAdmin?`<section class="calendar-admin-tools"><div class="admin-panel-head"><div><span class="eyebrow">Gestione calendario</span><h2>Calendario campionato</h2><p>Genera andata e ritorno, modifica qualsiasi gara e aggiungi playoff o finale.</p></div></div><div class="calendar-actions"><button class="btn primary" id="generate-calendar">Genera calendario</button><button class="btn" id="new-match">Nuova partita</button><button class="btn" id="new-finals">Aggiungi playoff/finale</button><button class="btn danger" id="delete-calendar">Elimina calendario</button></div></section>`:'';
-  set(dashLayout(`${adminTools}<div id="editor"></div><div class="calendar-list-head"><h2>Tutte le partite</h2><span>${(d.matches||[]).length} gare</span></div><div class="calendar-match-grid">${cards||'<div class="card empty">Nessuna partita registrata.</div>'}</div>`,'calendar'),'');
-  bindLogout();
   const teamOpts=state.teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
-  const openMatchForm=(m={})=>showForm('editor',`<div class="admin-editor-card"><h3>${m.id?'Modifica / riprogramma partita':'Nuova partita'}</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Fase</label><select class="input" name="phase">${Object.entries(phaseLabels).map(([v,l])=>`<option value="${v}" ${m.phase===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Giornata / turno</label><input class="input" name="round_name" value="${esc(m.round_name||'')}" required></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" value="${m.match_date?String(m.match_date).replace(' ','T').slice(0,16):''}" required></div><div class="field"><label>Casa</label><select class="input" name="home_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.home_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Trasferta</label><select class="input" name="away_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.away_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Stato calendario</label><select class="input" name="schedule_status">${Object.entries(statusLabels).map(([v,l])=>`<option value="${v}" ${(m.schedule_status||'scheduled')===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Stato risultato</label><select class="input" name="status"><option value="scheduled" ${m.status==='scheduled'?'selected':''}>Non conclusa</option><option value="pending" ${m.status==='pending'?'selected':''}>Referto in attesa</option><option value="published" ${m.status==='published'?'selected':''}>Conclusa e pubblicata</option><option value="postponed" ${m.status==='postponed'?'selected':''}>Rinviata</option></select></div><div class="field"><label>Gol casa</label><input class="input" type="number" min="0" name="home_score" value="${m.home_score??''}"></div><div class="field"><label>Gol ospite</label><input class="input" type="number" min="0" name="away_score" value="${m.away_score??''}"></div><div class="field full"><label>Campo</label><input class="input" name="venue" value="${esc(m.venue||'')}"></div><div class="field full"><label>Note programmazione</label><textarea class="input" name="schedule_notes">${esc(m.schedule_notes||'')}</textarea></div><div class="field full"><button class="btn primary">${m.id?'Salva modifiche':'Crea partita'}</button></div></form></div>`,async f=>{if(Number(f.home_team_id)===Number(f.away_team_id))throw new Error('Le squadre devono essere diverse');await api(m.id?`admin/matches/${m.id}`:'admin/matches',{method:m.id?'PUT':'POST',body:JSON.stringify(f)});manageCalendar()});
+
+  if(!document.querySelector('link[data-prime-calendar]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/calendar-admin.css';
+    link.dataset.primeCalendar='1';
+    document.head.appendChild(link);
+  }
+
+  const adminTools=isAdmin?`<section class="calendar-admin-tools"><div class="admin-panel-head"><div><span class="eyebrow">Gestione calendario</span><h2>Calendario campionato</h2><p>Visualizza le gare per mese, settimana o giorno e modifica qualsiasi partita direttamente dal calendario.</p></div></div><div class="calendar-actions"><button class="btn primary" id="generate-calendar">Genera calendario</button><button class="btn" id="new-match">Nuova partita</button><button class="btn" id="new-finals">Aggiungi playoff/finale</button><button class="btn danger" id="delete-calendar">Elimina calendario</button></div></section>`:'';
+
+  set(dashLayout(`${adminTools}<div id="editor"></div>
+    <section class="gcal-shell">
+      <div class="gcal-toolbar">
+        <div class="gcal-toolbar-left">
+          <button class="gcal-icon-btn" id="cal-prev" type="button" aria-label="Periodo precedente">‹</button>
+          <button class="gcal-icon-btn" id="cal-next" type="button" aria-label="Periodo successivo">›</button>
+          <button class="gcal-today" id="cal-today" type="button">Oggi</button>
+          <h2 id="cal-title"></h2>
+        </div>
+        <div class="gcal-view-switch" role="group" aria-label="Vista calendario">
+          <button type="button" data-view="month" class="active">Mese</button>
+          <button type="button" data-view="week">Settimana</button>
+          <button type="button" data-view="day">Giorno</button>
+        </div>
+      </div>
+      <div class="gcal-summary"><span><b>${matches.length}</b> partite totali</span><span class="gcal-legend"><i></i> Clicca una partita per modificarla</span></div>
+      <div id="calendar-root"></div>
+    </section>`,'calendar'),'');
+  bindLogout();
+
+  const openMatchForm=(m={})=>showForm('editor',`<div class="admin-editor-card"><div class="admin-editor-title"><h3>${m.id?'Modifica / riprogramma partita':'Nuova partita'}</h3>${m.id?`<button type="button" class="btn danger small" id="delete-single-match">Elimina partita</button>`:''}</div><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Fase</label><select class="input" name="phase">${Object.entries(phaseLabels).map(([v,l])=>`<option value="${v}" ${m.phase===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Giornata / turno</label><input class="input" name="round_name" value="${esc(m.round_name||'')}" required></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" value="${m.match_date?String(m.match_date).replace(' ','T').slice(0,16):''}" required></div><div class="field"><label>Casa</label><select class="input" name="home_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.home_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Trasferta</label><select class="input" name="away_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.away_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Stato calendario</label><select class="input" name="schedule_status">${Object.entries(statusLabels).map(([v,l])=>`<option value="${v}" ${(m.schedule_status||'scheduled')===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Stato risultato</label><select class="input" name="status"><option value="scheduled" ${m.status==='scheduled'?'selected':''}>Non conclusa</option><option value="pending" ${m.status==='pending'?'selected':''}>Referto in attesa</option><option value="published" ${m.status==='published'?'selected':''}>Conclusa e pubblicata</option><option value="postponed" ${m.status==='postponed'?'selected':''}>Rinviata</option></select></div><div class="field"><label>Gol casa</label><input class="input" type="number" min="0" name="home_score" value="${m.home_score??''}"></div><div class="field"><label>Gol ospite</label><input class="input" type="number" min="0" name="away_score" value="${m.away_score??''}"></div><div class="field full"><label>Campo</label><input class="input" name="venue" value="${esc(m.venue||'')}"></div><div class="field full"><label>Note programmazione</label><textarea class="input" name="schedule_notes">${esc(m.schedule_notes||'')}</textarea></div><div class="field full"><button class="btn primary">${m.id?'Salva modifiche':'Crea partita'}</button></div></form></div>`,async f=>{if(Number(f.home_team_id)===Number(f.away_team_id))throw new Error('Le squadre devono essere diverse');await api(m.id?`admin/matches/${m.id}`:'admin/matches',{method:m.id?'PUT':'POST',body:JSON.stringify(f)});manageCalendar()});
+
+  const monthNames=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+  const dayNames=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
+  let currentDate=matches.length?new Date(matches[0].match_date):new Date();
+  let currentView='month';
+
+  const isoDayKey=date=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  const matchTime=m=>new Intl.DateTimeFormat('it-IT',{hour:'2-digit',minute:'2-digit'}).format(new Date(m.match_date));
+  const eventHtml=(m,compact=false)=>`<button type="button" class="gcal-event phase-${esc(m.phase||'regular')} status-${esc(m.schedule_status||'scheduled')}" data-id="${m.id}" title="${esc(m.home_name)} vs ${esc(m.away_name)}">
+    <span class="gcal-event-time">${matchTime(m)}</span>
+    <strong>${esc(m.home_name)} <b>${m.status==='published'?`${m.home_score}-${m.away_score}`:'–'}</b> ${esc(m.away_name)}</strong>
+    ${compact?'':`<small>${esc(m.round_name||'Prime League')}</small>`}
+  </button>`;
+
+  const matchesForDate=date=>matches.filter(m=>isoDayKey(new Date(m.match_date))===isoDayKey(date));
+
+  function renderMonth(){
+    const root=document.querySelector('#calendar-root');
+    const title=document.querySelector('#cal-title');
+    title.textContent=`${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+    const first=new Date(currentDate.getFullYear(),currentDate.getMonth(),1);
+    const offset=(first.getDay()+6)%7;
+    const start=new Date(first); start.setDate(first.getDate()-offset);
+    const todayKey=isoDayKey(new Date());
+    let html=`<div class="gcal-month"><div class="gcal-weekdays">${dayNames.map(x=>`<div>${x}</div>`).join('')}</div><div class="gcal-month-grid">`;
+    for(let i=0;i<42;i++){
+      const date=new Date(start); date.setDate(start.getDate()+i);
+      const dayMatches=matchesForDate(date);
+      const outside=date.getMonth()!==currentDate.getMonth();
+      html+=`<div class="gcal-day-cell ${outside?'outside':''} ${isoDayKey(date)===todayKey?'today':''}" data-date="${isoDayKey(date)}">
+        <div class="gcal-day-number"><span>${date.getDate()}</span>${dayMatches.length?`<b>${dayMatches.length}</b>`:''}</div>
+        <div class="gcal-day-events">${dayMatches.slice(0,3).map(m=>eventHtml(m,true)).join('')}${dayMatches.length>3?`<button type="button" class="gcal-more" data-date="${isoDayKey(date)}">+${dayMatches.length-3} altre</button>`:''}</div>
+      </div>`;
+    }
+    root.innerHTML=html+'</div></div>';
+  }
+
+  function weekStart(date){
+    const d=new Date(date); const offset=(d.getDay()+6)%7; d.setDate(d.getDate()-offset); d.setHours(0,0,0,0); return d;
+  }
+
+  function renderWeek(){
+    const root=document.querySelector('#calendar-root');
+    const start=weekStart(currentDate);
+    const endDate=new Date(start); endDate.setDate(start.getDate()+6);
+    document.querySelector('#cal-title').textContent=`${start.getDate()} ${monthNames[start.getMonth()].slice(0,3)} – ${endDate.getDate()} ${monthNames[endDate.getMonth()].slice(0,3)} ${endDate.getFullYear()}`;
+    const days=Array.from({length:7},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d});
+    const hours=[18,19,20,21,22];
+    root.innerHTML=`<div class="gcal-week-scroll"><div class="gcal-week">
+      <div class="gcal-week-head"><div class="gcal-time-head"></div>${days.map(d=>`<button type="button" class="${isoDayKey(d)===isoDayKey(new Date())?'today':''}" data-open-day="${isoDayKey(d)}"><small>${dayNames[(d.getDay()+6)%7]}</small><b>${d.getDate()}</b></button>`).join('')}</div>
+      <div class="gcal-week-body">
+        <div class="gcal-time-column">${hours.map(h=>`<div>${String(h).padStart(2,'0')}:00</div>`).join('')}</div>
+        ${days.map(day=>`<div class="gcal-week-day">${hours.map(h=>`<div class="gcal-hour-slot">${matchesForDate(day).filter(m=>new Date(m.match_date).getHours()===h).map(m=>eventHtml(m)).join('')}</div>`).join('')}</div>`).join('')}
+      </div>
+    </div></div>`;
+  }
+
+  function renderDay(){
+    const root=document.querySelector('#calendar-root');
+    const date=currentDate;
+    document.querySelector('#cal-title').textContent=new Intl.DateTimeFormat('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(date);
+    const dayMatches=matchesForDate(date);
+    root.innerHTML=`<div class="gcal-day-view">
+      <div class="gcal-day-agenda">${dayMatches.length?dayMatches.map(m=>`<article class="gcal-agenda-item"><div class="gcal-agenda-time">${matchTime(m)}</div><div class="gcal-agenda-card"><span>${esc(phaseLabels[m.phase]||'Regular season')} · ${esc(m.round_name||'')}</span><h3>${esc(m.home_name)} ${m.status==='published'?`<b>${m.home_score}-${m.away_score}</b>`:'vs'} ${esc(m.away_name)}</h3><p>${esc(m.venue||'Campo da definire')} · ${esc(statusLabels[m.schedule_status]||'In programma')}</p>${isAdmin?`<button type="button" class="btn small edit-match" data-id="${m.id}">Modifica / riprogramma</button>`:''}</div></article>`).join(''):`<div class="gcal-empty-day"><strong>Nessuna partita</strong><span>Non ci sono gare programmate in questa giornata.</span>${isAdmin?'<button class="btn primary" id="day-new-match">Aggiungi partita</button>':''}</div>`}</div>
+    </div>`;
+  }
+
+  function bindCalendarEvents(){
+    document.querySelectorAll('.gcal-event,.edit-match').forEach(el=>el.addEventListener('click',()=>{const m=matches.find(x=>Number(x.id)===Number(el.dataset.id));if(m&&isAdmin)openMatchForm(m)}));
+    document.querySelectorAll('.gcal-more,[data-open-day]').forEach(el=>el.addEventListener('click',()=>{const value=el.dataset.date||el.dataset.openDay;currentDate=new Date(`${value}T12:00:00`);currentView='day';syncViewButtons();renderCalendar()}));
+    document.querySelector('#day-new-match')?.addEventListener('click',()=>openMatchForm({match_date:`${isoDayKey(currentDate)}T19:00`}));
+  }
+
+  function syncViewButtons(){
+    document.querySelectorAll('.gcal-view-switch button').forEach(btn=>btn.classList.toggle('active',btn.dataset.view===currentView));
+  }
+
+  function renderCalendar(){
+    if(currentView==='month')renderMonth();
+    else if(currentView==='week')renderWeek();
+    else renderDay();
+    bindCalendarEvents();
+  }
+
+  document.querySelectorAll('.gcal-view-switch button').forEach(btn=>btn.addEventListener('click',()=>{currentView=btn.dataset.view;syncViewButtons();renderCalendar()}));
+  document.querySelector('#cal-today').addEventListener('click',()=>{currentDate=new Date();renderCalendar()});
+  document.querySelector('#cal-prev').addEventListener('click',()=>{if(currentView==='month')currentDate.setMonth(currentDate.getMonth()-1);else if(currentView==='week')currentDate.setDate(currentDate.getDate()-7);else currentDate.setDate(currentDate.getDate()-1);renderCalendar()});
+  document.querySelector('#cal-next').addEventListener('click',()=>{if(currentView==='month')currentDate.setMonth(currentDate.getMonth()+1);else if(currentView==='week')currentDate.setDate(currentDate.getDate()+7);else currentDate.setDate(currentDate.getDate()+1);renderCalendar()});
+
   if(isAdmin){
     document.querySelector('#new-match').onclick=()=>openMatchForm();
-    document.querySelectorAll('.edit-match').forEach(b=>b.onclick=()=>openMatchForm(d.matches.find(x=>Number(x.id)===Number(b.dataset.id))));
-    document.querySelector('#generate-calendar').onclick=()=>showForm('editor',`<div class="admin-editor-card"><h3>Genera calendario automatico</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Data inizio</label><input class="input" type="date" name="start_date" required></div><div class="field"><label>Data finale indicativa</label><input class="input" type="date" name="end_date"></div><div class="field"><label>Massimo partite per sera</label><select class="input" name="max_per_day"><option>1</option><option>2</option><option selected>3</option></select></div><div class="field"><label>Pausa mercato (giorni)</label><input class="input" type="number" min="0" name="market_break_days" value="20"></div><div class="field full"><label>Squadre partecipanti</label><div class="calendar-team-checks">${state.teams.map(t=>`<label><input type="checkbox" name="team_ids" value="${t.id}" checked> ${esc(t.name)}</label>`).join('')}</div></div><div class="field full"><label>Giorni principali</label><div class="calendar-team-checks"><label><input type="checkbox" name="allowed_days" value="3" checked> Mercoledì</label><label><input type="checkbox" name="allowed_days" value="4" checked> Giovedì</label><label><input type="checkbox" name="allowed_days" value="5" checked> Venerdì</label></div></div><div class="field full"><label>Orari</label><input class="input" name="times_text" value="19:00,20:00,21:00"></div><div class="field full"><label>Campo predefinito</label><input class="input" name="venue"></div><div class="field full"><label class="admin-check"><input type="checkbox" name="replace_existing" value="1"> Sostituisci eventuale calendario già presente</label></div><div class="field full"><button class="btn primary" type="submit">Genera andata e ritorno</button></div></form></div>`,async(_,form)=>{const fd=new FormData(form);const teamIds=fd.getAll('team_ids');const allowedDays=fd.getAll('allowed_days');const times=String(fd.get('times_text')||'').split(',').map(x=>x.trim()).filter(Boolean);if(teamIds.length<2)throw new Error('Seleziona almeno due squadre');if(!allowedDays.length)throw new Error('Seleziona almeno un giorno di gioco');if(!times.length)throw new Error('Inserisci almeno un orario');const submit=form.querySelector('button[type="submit"]');if(submit){submit.disabled=true;submit.textContent='Generazione in corso…'}try{const r=await api('admin/calendar/generate',{method:'POST',body:JSON.stringify({season_id:fd.get('season_id'),start_date:fd.get('start_date'),end_date:fd.get('end_date'),max_per_day:fd.get('max_per_day'),market_break_days:fd.get('market_break_days'),venue:fd.get('venue'),replace_existing:fd.get('replace_existing')==='1',team_ids:teamIds,allowed_days:allowedDays,times})});alert(`Calendario creato correttamente\n\n${r.matches_created} partite generate\nPrima partita: ${r.first_match||'—'}\nUltima partita: ${r.last_match||'—'}`);await manageCalendar()}finally{if(submit){submit.disabled=false;submit.textContent='Genera andata e ritorno'}}});
+    document.querySelector('#generate-calendar').onclick=()=>showForm('editor',`<div class="admin-editor-card"><h3>Genera calendario automatico</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Data inizio</label><input class="input" type="date" name="start_date" required></div><div class="field"><label>Data finale indicativa</label><input class="input" type="date" name="end_date"></div><div class="field"><label>Massimo partite per sera</label><select class="input" name="max_per_day"><option>1</option><option>2</option><option selected>3</option></select></div><div class="field"><label>Pausa mercato (giorni)</label><input class="input" type="number" min="0" name="market_break_days" value="20"></div><div class="field full"><label>Squadre partecipanti</label><div class="calendar-team-checks">${state.teams.map(t=>`<label><input type="checkbox" name="team_ids" value="${t.id}" checked> ${esc(t.name)}</label>`).join('')}</div></div><div class="field full"><label>Giorni principali</label><div class="calendar-team-checks"><label><input type="checkbox" name="allowed_days" value="3" checked> Mercoledì</label><label><input type="checkbox" name="allowed_days" value="4" checked> Giovedì</label><label><input type="checkbox" name="allowed_days" value="5" checked> Venerdì</label></div></div><div class="field full"><label>Orari</label><input class="input" name="times_text" value="19:00,20:00,21:00"></div><div class="field full"><label>Campo predefinito</label><input class="input" name="venue"></div><div class="field full"><label class="admin-check"><input type="checkbox" name="replace_existing" value="1"> Sostituisci eventuale calendario già presente</label></div><div class="field full"><button class="btn primary" type="submit">Genera andata e ritorno</button></div></form></div>`,async(_,form)=>{const fd=new FormData(form);const teamIds=fd.getAll('team_ids');const allowedDays=fd.getAll('allowed_days');const times=String(fd.get('times_text')||'').split(',').map(x=>x.trim()).filter(Boolean);if(teamIds.length<2)throw new Error('Seleziona almeno due squadre');const r=await api('admin/calendar/generate',{method:'POST',body:JSON.stringify({season_id:fd.get('season_id'),start_date:fd.get('start_date'),end_date:fd.get('end_date'),max_per_day:fd.get('max_per_day'),market_break_days:fd.get('market_break_days'),venue:fd.get('venue'),replace_existing:fd.get('replace_existing')==='1',team_ids:teamIds,allowed_days:allowedDays,times})});alert(`Calendario creato: ${r.matches_created} partite`);manageCalendar()});
     document.querySelector('#new-finals').onclick=()=>showForm('editor',`<div class="admin-editor-card"><h3>Aggiungi fase finale</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Fase</label><select class="input" name="phase"><option value="playoff">Playoff</option><option value="semifinal">Semifinale</option><option value="final">Finale</option></select></div><div class="field"><label>Nome turno</label><input class="input" name="round_name" placeholder="Es. Playoff 1"></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" required></div><div class="field"><label>Casa</label><select class="input" name="home_team_id">${teamOpts}</select></div><div class="field"><label>Trasferta</label><select class="input" name="away_team_id">${teamOpts}</select></div><div class="field full"><label>Campo</label><input class="input" name="venue"></div><div class="field full"><button class="btn primary">Aggiungi partita</button></div></form></div>`,async f=>{await api('admin/calendar/finals',{method:'POST',body:JSON.stringify(f)});manageCalendar()});
     document.querySelector('#delete-calendar').onclick=()=>showForm('editor',`<div class="admin-editor-card danger-zone"><h3>Elimina completamente il calendario</h3><p>Verranno eliminate tutte le partite, i risultati, gli eventi e i referti della stagione scelta.</p><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Scrivi ELIMINA</label><input class="input" name="confirmation" required></div><div class="field full"><button class="btn danger">Elimina definitivamente</button></div></form></div>`,async f=>{await api('admin/calendar/delete',{method:'POST',body:JSON.stringify(f)});manageCalendar()});
   }
-  document.querySelectorAll('.submit-match').forEach(b=>b.onclick=()=>showForm('editor',`<div class="card"><h3>Invia referto</h3><form class="form-grid"><input type="hidden" name="match_id" value="${b.dataset.id}"><div class="field"><label>Gol squadra di casa</label><input class="input" type="number" min="0" name="home_score" required></div><div class="field"><label>Gol squadra ospite</label><input class="input" type="number" min="0" name="away_score" required></div><div class="field full"><label>Note, marcatori, assist e cartellini</label><textarea class="input" name="notes"></textarea></div><div class="field full"><button class="btn primary">Invia all’admin</button></div></form></div>`,async f=>{f.events=[];await api('team/submissions',{method:'POST',body:JSON.stringify(f)});manageCalendar()}));
+
+  syncViewButtons();
+  renderCalendar();
 }
 async function manageMatches(){
   await loadTeams(); const isAdmin=['super_admin','organizer'].includes(state.user.role); const endpoint=isAdmin?'admin/matches':'team/matches'; const d=await api(endpoint); const seasons=isAdmin?(d.seasons||[]):[];
