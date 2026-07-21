@@ -5,3 +5,6 @@
 .dashboard-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}.dashboard-actions a{border:1px solid #dbe4ef;background:#f8fafc;border-radius:16px;padding:15px;text-align:left;text-decoration:none}.dashboard-actions a>span{display:grid;place-items:center;width:31px;height:31px;border-radius:10px;background:#07172f;color:#fff;font-weight:900;margin-bottom:11px}.dashboard-actions strong,.dashboard-actions small{display:block}.dashboard-actions small{margin-top:4px;color:#748196}
 .team-profile-panel{margin-top:16px}.team-dashboard-profile{display:flex;align-items:center;gap:15px}.team-dashboard-profile .logo{width:68px;height:68px;flex:0 0 68px}.team-dashboard-profile div{display:flex;flex-direction:column}.team-dashboard-profile strong{font-size:20px}.team-dashboard-profile span,.team-dashboard-profile small{color:#718095;margin-top:3px}.referee-dashboard-actions{grid-template-columns:repeat(2,1fr)}
 @media(max-width:800px){.dashboard-kpis{grid-template-columns:1fr 1fr}.dashboard-actions,.referee-dashboard-actions{grid-template-columns:1fr}}
+
+.team-dashboard-actions{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1000px){.team-dashboard-actions{grid-template-columns:1fr 1fr}}

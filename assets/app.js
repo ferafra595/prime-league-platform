@@ -375,7 +375,7 @@ function adminRoleLabel(role){return ({super_admin:'Super Admin',organizer:'Orga
 function dashLayout(body,section='overview'){
   const league=[['overview','Panoramica'],['seasons','Stagioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['media','Media'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
   if(['super_admin','organizer'].includes(state.user.role)) league.splice(6,0,['users','Account']);
-  const teamNav=[['overview','Panoramica'],['players','Rosa'],['matches','Partite'],['sponsors','Sponsor']];
+  const teamNav=[['overview','Panoramica'],['profile','Profilo squadra'],['players','Rosa'],['matches','Partite e referti'],['sponsors','Sponsor']];
   const refereeNav=[['overview','Panoramica'],['matches','Partite e referti']];
   const items=['super_admin','organizer'].includes(state.user.role)?league:state.user.role==='referee'?refereeNav:teamNav;
   return `<div class="dashboard"><aside class="card sidebar"><div class="admin-user-chip"><b>${esc(state.user.display_name)}</b><span>${esc(adminRoleLabel(state.user.role))}</span></div>${items.map(([r,l])=>`<a class="${section===r?'active':''}" href="#/dashboard/${r}">${l}</a>`).join('')}<button id="logout" class="btn danger" style="width:100%;margin-top:12px">Esci</button></aside><section>${body}</section></div>`;
@@ -416,6 +416,7 @@ async function dashboard(section='overview'){
         <section class="dashboard-panel dashboard-actions-panel">
           <div class="dashboard-panel-head"><div><span>Gestione squadra</span><h3>Azioni rapide</h3></div></div>
           <div class="dashboard-actions team-dashboard-actions">
+            <a href="#/dashboard/profile"><span>◫</span><strong>Profilo squadra</strong><small>Aggiorna logo, colori e contatti</small></a>
             <a href="#/dashboard/players"><span>◎</span><strong>Gestisci rosa</strong><small>Aggiungi e modifica i giocatori</small></a>
             <a href="#/dashboard/matches"><span>⚽</span><strong>Partite</strong><small>Consulta calendario e risultati</small></a>
             <a href="#/dashboard/sponsors"><span>★</span><strong>Sponsor</strong><small>Gestisci i partner della squadra</small></a>
@@ -554,6 +555,7 @@ async function dashboard(section='overview'){
   if(section==='seasons') return manageSeasons();
   if(section==='calendar') return manageCalendar();
   if(section==='teams') return adminTeams();
+  if(section==='profile') return teamProfile();
   if(section==='players') return managePlayers();
   if(section==='matches') return manageMatches();
   if(section==='submissions') return submissions();
@@ -718,7 +720,250 @@ async function adminTeams(){
 }
 function teamForm(t={}){return `<div class="admin-editor-card"><h3>${t.id?'Modifica squadra':'Nuova squadra'}</h3><form class="form-grid data-form"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(t.name||'')}" required></div><div class="field"><label>Sigla</label><input class="input" name="short_name" value="${esc(t.short_name||'')}"></div><div class="field"><label>Responsabile</label><input class="input" name="manager_name" value="${esc(t.manager_name||'')}"></div><div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(t.coach_name||'')}"></div><div class="field"><label>Colore principale</label><input class="input" type="color" name="primary_color" value="${esc(t.primary_color||'#081a36')}"></div><div class="field"><label>Colore secondario</label><input class="input" type="color" name="secondary_color" value="${esc(t.secondary_color||'#ffffff')}"></div>${mediaPicker({name:'logo_file',current:t.logo_url||'',label:'Stemma squadra',shape:'logo'})}<div class="field full"><label>Descrizione</label><textarea class="input" name="description">${esc(t.description||'')}</textarea></div>${t.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${t.is_active?'checked':''}> Squadra attiva</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${t.id?'Salva modifiche':'Crea squadra'}</button></div></form></div>`}
 function showForm(id,html,handler){document.querySelector('#'+id).innerHTML=html;const form=document.querySelector('#'+id+' form');if(!form)return;bindMediaPicker(form);form.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await handler(data,e.target)}catch(err){alert(err.message)}}}
+
+async function teamProfile(){
+  if(state.user.role!=='team_manager'){location.hash='#/dashboard';return}
+  const d=await api('team/profile');
+  const team=d.team||{};
+  const details=d.details||{};
+
+  if(!document.querySelector('link[data-prime-team-area]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/assets/team-area.css';link.dataset.primeTeamArea='1';document.head.appendChild(link);
+  }
+
+  set(dashLayout(`<div class="admin-page-head">
+    <div><span class="eyebrow">Identità della squadra</span><h2>Profilo squadra</h2><p>Aggiorna i dati pubblici e i contatti della tua società.</p></div>
+  </div>
+  <div id="team-profile-message"></div>
+  <section class="team-profile-editor">
+    <form class="form-grid" id="team-profile-form">
+      <div class="field full">${mediaPicker({name:'team_logo_file',current:team.logo_url||'',label:'Stemma della squadra',shape:'logo'})}</div>
+      <div class="field"><label>Nome squadra</label><input class="input" value="${esc(team.name||'')}" disabled><small>Il nome ufficiale può essere modificato soltanto dall’Admin.</small></div>
+      <div class="field"><label>Nome breve</label><input class="input" name="short_name" maxlength="12" value="${esc(team.short_name||'')}"></div>
+      <div class="field"><label>Colore principale</label><input class="input color-input" type="color" name="primary_color" value="${esc(team.primary_color||'#07172f')}"></div>
+      <div class="field"><label>Colore secondario</label><input class="input color-input" type="color" name="secondary_color" value="${esc(team.secondary_color||'#ffffff')}"></div>
+      <div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(team.coach_name||'')}"></div>
+      <div class="field"><label>Dirigente responsabile</label><input class="input" name="manager_name" value="${esc(team.manager_name||'')}"></div>
+      <div class="field"><label>Città</label><input class="input" name="city" value="${esc(details.city||'')}"></div>
+      <div class="field"><label>Campo di casa</label><input class="input" name="home_venue" value="${esc(details.home_venue||'')}"></div>
+      <div class="field"><label>Telefono</label><input class="input" name="phone" value="${esc(details.phone||'')}"></div>
+      <div class="field"><label>Email pubblica</label><input class="input" type="email" name="public_email" value="${esc(details.public_email||'')}"></div>
+      <div class="field"><label>Instagram</label><input class="input" name="instagram_url" value="${esc(details.instagram_url||'')}" placeholder="https://instagram.com/..."></div>
+      <div class="field"><label>Facebook</label><input class="input" name="facebook_url" value="${esc(details.facebook_url||'')}" placeholder="https://facebook.com/..."></div>
+      <div class="field full"><label>Descrizione</label><textarea class="input" name="description" rows="5">${esc(team.description||'')}</textarea></div>
+      <div class="field full"><button class="btn primary" id="save-team-profile">Salva profilo</button></div>
+    </form>
+  </section>`,'profile'),'');
+  bindLogout();
+
+  const form=document.querySelector('#team-profile-form');
+  bindMediaPicker(form);
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const button=document.querySelector('#save-team-profile');
+    button.disabled=true;button.textContent='Salvataggio...';
+    try{
+      const fd=new FormData(form);
+      const file=form.querySelector('[name="team_logo_file"]')?.files?.[0];
+      let logoUrl=team.logo_url||'';
+      if(fd.get('remove_media')==='1')logoUrl='';
+      if(file)logoUrl=(await uploadMediaFile(file,'logos',logoUrl)).url;
+      const payload=Object.fromEntries(fd);
+      payload.logo_url=logoUrl;
+      delete payload.team_logo_file;delete payload.existing_media_url;delete payload.remove_media;
+      await api('team/profile',{method:'PUT',body:JSON.stringify(payload)});
+      document.querySelector('#team-profile-message').innerHTML=message('Profilo squadra aggiornato correttamente.','success');
+      setTimeout(teamProfile,700);
+    }catch(err){
+      document.querySelector('#team-profile-message').innerHTML=message(err.message,'error');
+      button.disabled=false;button.textContent='Salva profilo';
+    }
+  };
+}
+
+async function teamRoster(){
+  const d=await api('team/players');
+  const players=d.players||[];
+  const roles=[...new Set(players.map(p=>p.role).filter(Boolean))].sort();
+  const active=players.filter(p=>Number(p.is_active)!==0).length;
+
+  if(!document.querySelector('link[data-prime-team-area]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/assets/team-area.css';link.dataset.primeTeamArea='1';document.head.appendChild(link);
+  }
+
+  const card=p=>`<article class="team-player-card" data-search="${esc(`${p.first_name} ${p.last_name} ${p.role||''} ${p.shirt_number||''}`.toLowerCase())}" data-role="${esc(p.role||'')}" data-status="${Number(p.is_active)!==0?'active':'inactive'}">
+    <div class="team-player-photo">${avatar(p.photo_url,`${p.first_name} ${p.last_name}`)}${p.shirt_number?`<b>#${p.shirt_number}</b>`:''}</div>
+    <div class="team-player-info"><span>${esc(p.role||'Ruolo non indicato')}</span><h3>${esc(p.first_name)} ${esc(p.last_name)}</h3><small>${Number(p.is_active)!==0?'Giocatore attivo':'Giocatore inattivo'}</small></div>
+    <div class="team-player-actions"><button class="btn small edit-team-player" data-id="${p.id}">Modifica</button><button class="btn small ${Number(p.is_active)!==0?'deactivate-player':'activate-player'}" data-id="${p.id}">${Number(p.is_active)!==0?'Disattiva':'Riattiva'}</button></div>
+  </article>`;
+
+  set(dashLayout(`<div class="admin-page-head">
+    <div><span class="eyebrow">Gestione rosa</span><h2>La tua squadra</h2><p>Gestisci giocatori, numeri di maglia, ruoli e stato della rosa.</p></div>
+    <button class="btn primary" id="new-team-player">Nuovo giocatore</button>
+  </div>
+  <section class="team-roster-summary"><div><span>Totale rosa</span><b>${players.length}</b></div><div><span>Attivi</span><b>${active}</b></div><div><span>Inattivi</span><b>${players.length-active}</b></div></section>
+  <div id="editor"></div>
+  <section class="team-roster-filters">
+    <div class="field"><label>Cerca</label><input class="input" id="team-player-search" placeholder="Nome, numero o ruolo"></div>
+    <div class="field"><label>Ruolo</label><select class="input" id="team-player-role"><option value="">Tutti</option>${roles.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>
+    <div class="field"><label>Stato</label><select class="input" id="team-player-status"><option value="">Tutti</option><option value="active">Attivi</option><option value="inactive">Inattivi</option></select></div>
+    <span id="team-player-count"></span>
+  </section>
+  <section class="team-roster-grid">${players.map(card).join('')||'<div class="team-area-empty">La rosa è ancora vuota.</div>'}</section>`,'players'),'');
+  bindLogout();
+
+  const apply=()=>{
+    const q=(document.querySelector('#team-player-search').value||'').toLowerCase().trim();
+    const role=document.querySelector('#team-player-role').value;
+    const status=document.querySelector('#team-player-status').value;
+    let visible=0;
+    document.querySelectorAll('.team-player-card').forEach(c=>{
+      const show=(!q||c.dataset.search.includes(q))&&(!role||c.dataset.role===role)&&(!status||c.dataset.status===status);
+      c.hidden=!show;if(show)visible++;
+    });
+    document.querySelector('#team-player-count').textContent=`${visible} giocatori`;
+  };
+  ['team-player-search','team-player-role','team-player-status'].forEach(id=>document.querySelector('#'+id).addEventListener(id==='team-player-search'?'input':'change',apply));
+
+  const open=(p={})=>{
+    showForm('editor',`<div class="admin-editor-card"><h3>${p.id?'Modifica giocatore':'Nuovo giocatore'}</h3><form class="form-grid team-player-form">
+      <div class="field full">${mediaPicker({name:'player_photo_file',current:p.photo_url||'',label:'Foto giocatore',shape:'portrait'})}</div>
+      <div class="field"><label>Nome</label><input class="input" name="first_name" value="${esc(p.first_name||'')}" required></div>
+      <div class="field"><label>Cognome</label><input class="input" name="last_name" value="${esc(p.last_name||'')}" required></div>
+      <div class="field"><label>Numero di maglia</label><input class="input" type="number" min="1" max="99" name="shirt_number" value="${p.shirt_number||''}"></div>
+      <div class="field"><label>Ruolo</label><select class="input" name="role" required><option value="">Seleziona</option>${['Portiere','Difensore','Centrocampista','Attaccante'].map(r=>`<option value="${r}" ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></div>
+      ${p.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${Number(p.is_active)!==0?'checked':''}> Giocatore attivo</label></div>`:''}
+      <div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Aggiungi alla rosa'}</button></div>
+    </form></div>`,async data=>{
+      const form=document.querySelector('.team-player-form');
+      const file=form.querySelector('[name="player_photo_file"]')?.files?.[0];
+      let photo=p.photo_url||'';
+      const fd=new FormData(form);
+      if(fd.get('remove_media')==='1')photo='';
+      if(file)photo=(await uploadMediaFile(file,'players',photo)).url;
+      data.photo_url=photo;data.is_active=p.id?(data.is_active==='1'?1:0):1;
+      delete data.player_photo_file;delete data.existing_media_url;delete data.remove_media;
+      await api(p.id?`team/players/${p.id}`:'team/players',{method:p.id?'PUT':'POST',body:JSON.stringify(data)});
+      teamRoster();
+    });
+    bindMediaPicker(document.querySelector('.team-player-form'));
+  };
+
+  document.querySelector('#new-team-player').onclick=()=>open();
+  document.querySelectorAll('.edit-team-player').forEach(b=>b.onclick=()=>open(players.find(p=>Number(p.id)===Number(b.dataset.id))));
+  document.querySelectorAll('.deactivate-player,.activate-player').forEach(b=>b.onclick=async()=>{
+    const p=players.find(x=>Number(x.id)===Number(b.dataset.id));
+    await api(`team/players/${p.id}`,{method:'PUT',body:JSON.stringify({...p,is_active:b.classList.contains('activate-player')?1:0})});
+    teamRoster();
+  });
+  apply();
+}
+
+async function teamMatchesArea(){
+  const [d,pd]=await Promise.all([api('team/matches'),api('team/players')]);
+  const matches=d.matches||[];
+  const players=pd.players||[];
+  const now=Date.now();
+
+  if(!document.querySelector('link[data-prime-team-area]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/assets/team-area.css';link.dataset.primeTeamArea='1';document.head.appendChild(link);
+  }
+
+  const stateOf=m=>{
+    if(m.submission_status==='pending')return 'pending';
+    if(m.submission_status==='rejected')return 'rejected';
+    if(m.submission_status==='approved'||m.status==='published')return 'completed';
+    return new Date(m.match_date).getTime()>now?'upcoming':'todo';
+  };
+  const labels={upcoming:'Prossime',todo:'Da completare',pending:'In attesa',rejected:'Da correggere',completed:'Concluse'};
+  const counts=Object.fromEntries(Object.keys(labels).map(k=>[k,matches.filter(m=>stateOf(m)===k).length]));
+
+  const card=m=>{
+    const st=stateOf(m);
+    const opponent=Number(m.home_team_id)===Number(state.user.team_id)?m.away_name:m.home_name;
+    return `<article class="team-match-card" data-state="${st}" data-search="${esc(`${m.home_name} ${m.away_name} ${m.round_name||''}`.toLowerCase())}">
+      <div class="team-match-head"><div><span>${esc(m.round_name||'Prime League')}</span><strong>${fmtDate(m.match_date)}</strong></div><span class="team-match-state ${st}">${labels[st]}</span></div>
+      <div class="team-match-score"><div><strong>${esc(m.home_name)}</strong></div><b>${m.status==='published'?`${m.home_score??0} – ${m.away_score??0}`:'VS'}</b><div><strong>${esc(m.away_name)}</strong></div></div>
+      <div class="team-match-meta"><span>${esc(m.venue||'Campo da definire')}</span><span>Avversario: ${esc(opponent)}</span></div>
+      ${m.submission_status==='rejected'?`<div class="team-rejection"><strong>Referto da correggere</strong><span>${esc(m.admin_note||'Controlla i dati e invialo nuovamente.')}</span></div>`:''}
+      <div class="team-match-actions">
+        ${['todo','rejected'].includes(st)?`<button class="btn primary small submit-team-report" data-id="${m.id}">${st==='rejected'?'Correggi e reinvia':'Compila referto'}</button>`:''}
+        ${st==='pending'?'<span class="team-waiting">In attesa di approvazione Admin</span>':''}
+        <a class="btn small" href="#/partita/${m.id}">Scheda partita</a>
+      </div>
+    </article>`;
+  };
+
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Calendario squadra</span><h2>Partite e referti</h2><p>Consulta le gare e invia all’Admin i dati delle partite concluse.</p></div></div>
+  <section class="team-match-tabs">${Object.entries(labels).map(([k,l])=>`<button data-tab="${k}" class="${k==='upcoming'?'active':''}"><span>${l}</span><b>${counts[k]}</b></button>`).join('')}<button data-tab="all"><span>Tutte</span><b>${matches.length}</b></button></section>
+  <div id="editor"></div>
+  <section class="team-match-toolbar"><div class="field"><label>Cerca</label><input class="input" id="team-match-search" placeholder="Avversario o giornata"></div><span id="team-match-count"></span></section>
+  <section class="team-match-grid">${matches.map(card).join('')||'<div class="team-area-empty">Nessuna partita disponibile.</div>'}</section>`,'matches'),'');
+  bindLogout();
+
+  let tab='upcoming';
+  const apply=()=>{
+    const q=(document.querySelector('#team-match-search').value||'').toLowerCase().trim();let visible=0;
+    document.querySelectorAll('.team-match-card').forEach(c=>{const show=(tab==='all'||c.dataset.state===tab)&&(!q||c.dataset.search.includes(q));c.hidden=!show;if(show)visible++});
+    document.querySelector('#team-match-count').textContent=`${visible} partite`;
+  };
+  document.querySelectorAll('.team-match-tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.team-match-tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');tab=b.dataset.tab;apply()});
+  document.querySelector('#team-match-search').addEventListener('input',apply);
+
+  const openReport=m=>{
+    let events=[];
+    if(m.submission_events_json){try{events=JSON.parse(m.submission_events_json)||[]}catch{}}
+    const teamPlayers=players;
+    const render=()=>{
+      const box=document.querySelector('#team-report-events');if(!box)return;
+      box.innerHTML=events.map((e,i)=>`<div class="team-event-row" data-i="${i}">
+        <select class="input event-type"><option value="goal" ${e.event_type==='goal'?'selected':''}>Gol</option><option value="assist" ${e.event_type==='assist'?'selected':''}>Assist</option><option value="yellow" ${e.event_type==='yellow'?'selected':''}>Ammonizione</option><option value="red" ${e.event_type==='red'?'selected':''}>Espulsione</option></select>
+        <select class="input event-player"><option value="">Seleziona giocatore</option>${teamPlayers.map(p=>`<option value="${p.id}" ${Number(e.player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select>
+        <input class="input event-quantity" type="number" min="1" value="${e.quantity||1}">
+        <button class="btn small danger remove-team-event" type="button">Rimuovi</button>
+      </div>`).join('')||'<div class="team-area-empty compact">Nessun evento inserito.</div>';
+      box.querySelectorAll('.team-event-row').forEach(row=>{
+        const i=Number(row.dataset.i);
+        row.querySelector('.event-type').onchange=e=>events[i].event_type=e.target.value;
+        row.querySelector('.event-player').onchange=e=>events[i].player_id=e.target.value;
+        row.querySelector('.event-quantity').oninput=e=>events[i].quantity=Math.max(1,Number(e.target.value||1));
+        row.querySelector('.remove-team-event').onclick=()=>{events.splice(i,1);render()};
+      });
+    };
+
+    document.querySelector('#editor').innerHTML=`<section class="team-report-editor">
+      <div class="account-editor-head"><div><span class="eyebrow">Invio referto</span><h3>${esc(m.home_name)} – ${esc(m.away_name)}</h3><p>${fmtDate(m.match_date)} · ${esc(m.venue||'Campo da definire')}</p></div><button class="btn small" id="close-team-report">Chiudi</button></div>
+      <div class="team-report-score">
+        <div><label>${esc(m.home_name)}</label><input class="input" id="team-home-score" type="number" min="0" value="${m.submission_home_score??m.home_score??0}"></div>
+        <b>–</b>
+        <div><label>${esc(m.away_name)}</label><input class="input" id="team-away-score" type="number" min="0" value="${m.submission_away_score??m.away_score??0}"></div>
+      </div>
+      <div class="team-event-heading"><div><h4>Eventi della tua squadra</h4><p>Inserisci marcatori, assist e cartellini. L’Admin verificherà tutto prima della pubblicazione.</p></div><div><button class="btn small add-team-event" data-type="goal">+ Gol</button><button class="btn small add-team-event" data-type="assist">+ Assist</button><button class="btn small add-team-event" data-type="yellow">+ Giallo</button><button class="btn small add-team-event" data-type="red">+ Rosso</button></div></div>
+      <div id="team-report-events"></div>
+      <div class="field"><label>MVP proposto</label><select class="input" id="team-report-mvp"><option value="">Nessuna proposta</option>${teamPlayers.map(p=>`<option value="${p.id}" ${Number(m.submission_mvp_player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Note per l’Admin</label><textarea class="input" id="team-report-notes" rows="4">${esc(m.submission_notes||'')}</textarea></div>
+      <div class="team-report-submit"><span>Dopo l’invio il referto resterà in attesa di approvazione.</span><button class="btn primary" id="send-team-report">Invia referto</button></div>
+    </section>`;
+    render();
+    document.querySelector('#editor').scrollIntoView({behavior:'smooth',block:'start'});
+    document.querySelector('#close-team-report').onclick=()=>document.querySelector('#editor').innerHTML='';
+    document.querySelectorAll('.add-team-event').forEach(b=>b.onclick=()=>{events.push({team_id:Number(state.user.team_id),player_id:'',event_type:b.dataset.type,quantity:1});render()});
+    document.querySelector('#send-team-report').onclick=async()=>{
+      const clean=events.filter(e=>e.player_id).map(e=>({...e,team_id:Number(state.user.team_id),player_id:Number(e.player_id),quantity:Number(e.quantity||1)}));
+      await api('team/submissions',{method:'POST',body:JSON.stringify({
+        match_id:m.id,home_score:Number(document.querySelector('#team-home-score').value||0),away_score:Number(document.querySelector('#team-away-score').value||0),
+        events:clean,mvp_player_id:document.querySelector('#team-report-mvp').value||null,notes:document.querySelector('#team-report-notes').value||''
+      })});
+      alert('Referto inviato correttamente.');teamMatchesArea();
+    };
+  };
+
+  document.querySelectorAll('.submit-team-report').forEach(b=>b.onclick=()=>openReport(matches.find(m=>Number(m.id)===Number(b.dataset.id))));
+  apply();
+}
+
 async function managePlayers(){
+  if(state.user.role==='team_manager')return teamRoster();
   await loadTeams();
   const endpoint=['super_admin','organizer'].includes(state.user.role)?'admin/players':'team/players';
   const d=await api(endpoint);
@@ -950,6 +1195,7 @@ async function manageCalendar(){
   renderCalendar();
 }
 async function manageMatches(){
+  if(state.user.role==='team_manager')return teamMatchesArea();
   await loadTeams();
   const isAdmin=['super_admin','organizer'].includes(state.user.role);
   const endpoint=isAdmin?'admin/matches':'team/matches';
@@ -1529,7 +1775,7 @@ async function users(){
 
   applyFilters();
 }
-async function sponsors(){await loadTeams();const d=await api('admin/sponsors');const rows=d.sponsors.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.level)}</td><td>${esc(x.team_name||'Lega')}</td><td>${x.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-sponsor" data-id="${x.id}">Modifica</button><button class="btn small danger delete-sponsor" data-id="${x.id}">Elimina</button></div></td></tr>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Sponsor</h2></div><button class="btn primary" id="new-sponsor">Nuovo sponsor</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows}</tbody></table></div>`,'sponsors'),'');bindLogout();const form=(x={})=>`<div class="admin-editor-card"><h3>${x.id?'Modifica sponsor':'Nuovo sponsor'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(x.name||'')}" required></div><div class="field"><label>Tipo</label><select class="input" name="level"><option value="league" ${x.level==='league'?'selected':''}>Lega</option><option value="team" ${x.level==='team'?'selected':''}>Squadra</option></select></div><div class="field"><label>Squadra</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(x.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>URL logo</label><input class="input" name="logo_url" value="${esc(x.logo_url||'')}"></div><div class="field"><label>Sito web</label><input class="input" name="website_url" value="${esc(x.website_url||'')}"></div><div class="field"><label class="admin-check"><input type="checkbox" name="is_featured" value="1" ${x.is_featured?'checked':''}> In evidenza</label></div>${x.id?`<div class="field"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${x.is_active?'checked':''}> Attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(x={})=>showForm('editor',form(x),async f=>{f.is_featured=f.is_featured==='1'?1:0;f.is_active=f.is_active==='1'?1:0;await api(x.id?`admin/sponsors/${x.id}`:'admin/sponsors',{method:x.id?'PUT':'POST',body:JSON.stringify(f)});sponsors()});document.querySelector('#new-sponsor').onclick=()=>open();document.querySelectorAll('.edit-sponsor').forEach(b=>b.onclick=()=>open(d.sponsors.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-sponsor').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo sponsor?')){await api(`admin/sponsors/${b.dataset.id}`,{method:'DELETE'});sponsors()}})}
+async function sponsors(){await loadTeams();const isTeam=state.user.role==='team_manager';const endpoint=isTeam?'team/sponsors':'admin/sponsors';const d=await api(endpoint);const rows=d.sponsors.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.level)}</td><td>${esc(x.team_name||'Lega')}</td><td>${x.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-sponsor" data-id="${x.id}">Modifica</button><button class="btn small danger delete-sponsor" data-id="${x.id}">Elimina</button></div></td></tr>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Sponsor</h2></div><button class="btn primary" id="new-sponsor">Nuovo sponsor</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows}</tbody></table></div>`,'sponsors'),'');bindLogout();const form=(x={})=>`<div class="admin-editor-card"><h3>${x.id?'Modifica sponsor':'Nuovo sponsor'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(x.name||'')}" required></div><div class="field"><label>Tipo</label><select class="input" name="level"><option value="league" ${x.level==='league'?'selected':''}>Lega</option><option value="team" ${x.level==='team'?'selected':''}>Squadra</option></select></div><div class="field"><label>Squadra</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(x.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>URL logo</label><input class="input" name="logo_url" value="${esc(x.logo_url||'')}"></div><div class="field"><label>Sito web</label><input class="input" name="website_url" value="${esc(x.website_url||'')}"></div><div class="field"><label class="admin-check"><input type="checkbox" name="is_featured" value="1" ${x.is_featured?'checked':''}> In evidenza</label></div>${x.id?`<div class="field"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${x.is_active?'checked':''}> Attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(x={})=>showForm('editor',form(x),async f=>{f.is_featured=f.is_featured==='1'?1:0;f.is_active=f.is_active==='1'?1:0;await api(x.id?`${isTeam?'team':'admin'}/sponsors/${x.id}`:endpoint,{method:x.id?'PUT':'POST',body:JSON.stringify(f)});sponsors()});document.querySelector('#new-sponsor').onclick=()=>open();document.querySelectorAll('.edit-sponsor').forEach(b=>b.onclick=()=>open(d.sponsors.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-sponsor').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo sponsor?')){await api(`${isTeam?'team':'admin'}/sponsors/${b.dataset.id}`,{method:'DELETE'});sponsors()}})}
 
 async function manageMedia(){
   const d=await api('admin/media');
