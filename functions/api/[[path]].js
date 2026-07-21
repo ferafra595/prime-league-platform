@@ -829,6 +829,40 @@ async function route(request, env, path) {
     const submissionTeamId=hasRole(user,'referee')?match.home_team_id:user.team_id;
     const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),d.notes||'').run(); await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true},201);
   }
+
+  if (path === 'admin/reports' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const seasonId=new URL(request.url).searchParams.get('season');
+    const params=[];
+    const seasonWhere=seasonId ? 'WHERE m.season_id=?' : '';
+    if(seasonId)params.push(Number(seasonId));
+
+    const rows=await env.DB.prepare(`SELECT
+      m.id,m.season_id,m.round_name,m.match_date,m.venue,m.status,m.home_score,m.away_score,m.mvp_player_id,
+      ht.id home_team_id,ht.name home_name,ht.logo_url home_logo,
+      at.id away_team_id,at.name away_name,at.logo_url away_logo,
+      COUNT(DISTINCT e.id) event_rows,
+      COALESCE(SUM(CASE WHEN e.event_type='goal' THEN e.quantity ELSE 0 END),0) goals_count,
+      COALESCE(SUM(CASE WHEN e.event_type='goal' AND e.assist_player_id IS NOT NULL THEN e.quantity ELSE 0 END),0) assists_count,
+      COALESCE(SUM(CASE WHEN e.event_type='yellow' THEN e.quantity ELSE 0 END),0) yellows_count,
+      COALESCE(SUM(CASE WHEN e.event_type='red' THEN e.quantity ELSE 0 END),0) reds_count,
+      (SELECT COUNT(*) FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending') pending_submissions,
+      (SELECT ps.id FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending' ORDER BY ps.created_at DESC LIMIT 1) pending_submission_id,
+      (SELECT ps.team_id FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending' ORDER BY ps.created_at DESC LIMIT 1) pending_team_id,
+      (SELECT t.name FROM match_submissions ps JOIN teams t ON t.id=ps.team_id WHERE ps.match_id=m.id AND ps.status='pending' ORDER BY ps.created_at DESC LIMIT 1) pending_team_name,
+      (SELECT ps.created_at FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending' ORDER BY ps.created_at DESC LIMIT 1) pending_created_at
+      FROM matches m
+      JOIN teams ht ON ht.id=m.home_team_id
+      JOIN teams at ON at.id=m.away_team_id
+      LEFT JOIN match_events e ON e.match_id=m.id
+      ${seasonWhere}
+      GROUP BY m.id
+      ORDER BY m.match_date DESC,m.id DESC`).bind(...params).all();
+
+    const seasons=await env.DB.prepare('SELECT id,name,is_current,start_date,end_date FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC').all();
+    return json({reports:rows.results,seasons:seasons.results});
+  }
+
   if (path === 'admin/submissions') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,m.round_name,ht.name home_name,at.name away_name,u.display_name submitted_by FROM match_submissions s JOIN teams t ON t.id=s.team_id JOIN users u ON u.id=s.submitted_by_user_id JOIN matches m ON m.id=s.match_id JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END,s.created_at DESC`).all(); return json({submissions:rows.results});
   }
