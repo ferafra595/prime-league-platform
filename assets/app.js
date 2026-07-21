@@ -1,4 +1,5 @@
 const app = document.querySelector('#app');
+ensureMediaStyles();
 const state = { user:null, teams:[], players:[] };
 
 const esc = (v='') => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -9,10 +10,78 @@ const api = async (path, options={}) => {
   if(!res.ok) throw new Error(data.error || 'Errore');
   return data;
 };
+
+async function prepareImageFile(file,maxDimension=1400){
+  if(!file)return null;
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw new Error('Sono ammessi solo file PNG, JPG o WEBP');
+  if(file.size>5*1024*1024)throw new Error('Il file supera il limite di 5 MB');
+  const bitmap=await createImageBitmap(file);
+  const scale=Math.min(1,maxDimension/Math.max(bitmap.width,bitmap.height));
+  const width=Math.max(1,Math.round(bitmap.width*scale));
+  const height=Math.max(1,Math.round(bitmap.height*scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=width;canvas.height=height;
+  const ctx=canvas.getContext('2d',{alpha:true});
+  ctx.drawImage(bitmap,0,0,width,height);
+  bitmap.close?.();
+  const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Impossibile elaborare l’immagine')),'image/webp',0.86));
+  const clean=(file.name||'immagine').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9_-]+/g,'-');
+  return new File([blob],`${clean||'immagine'}.webp`,{type:'image/webp'});
+}
+async function uploadMediaFile(file,category,oldUrl='',maxDimension=1400){
+  if(!file)return oldUrl||'';
+  const prepared=await prepareImageFile(file,maxDimension);
+  const form=new FormData();
+  form.append('file',prepared);
+  form.append('category',category);
+  if(oldUrl)form.append('old_url',oldUrl);
+  const res=await fetch('/api/admin/media/upload',{method:'POST',body:form});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok)throw new Error(data.error||'Errore durante il caricamento');
+  return data.url;
+}
+function mediaPicker({name='media_file',current='',label='Immagine',shape='square'}={}){
+  return `<div class="field full media-picker-field">
+    <label>${esc(label)}</label>
+    <div class="media-picker ${shape}">
+      <div class="media-preview">${current?`<img src="${esc(current)}" alt="Anteprima">`:`<div class="media-placeholder"><b>+</b><span>Nessuna immagine</span></div>`}</div>
+      <div class="media-picker-actions">
+        <label class="btn media-file-button">Scegli file<input type="file" name="${esc(name)}" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label>
+        ${current?'<button class="btn small danger remove-media" type="button">Rimuovi</button>':''}
+        <small>PNG, JPG o WEBP · massimo 5 MB</small>
+      </div>
+    </div>
+    <input type="hidden" name="existing_media_url" value="${esc(current)}">
+    <input type="hidden" name="remove_media" value="0">
+  </div>`;
+}
+function bindMediaPicker(form){
+  form.querySelectorAll('.media-picker-field').forEach(field=>{
+    const input=field.querySelector('input[type="file"]');
+    const preview=field.querySelector('.media-preview');
+    const remove=field.querySelector('.remove-media');
+    const removeFlag=field.querySelector('[name="remove_media"]');
+    input?.addEventListener('change',()=>{
+      const file=input.files?.[0];if(!file)return;
+      if(!['image/jpeg','image/png','image/webp'].includes(file.type)){input.value='';return alert('Seleziona un file PNG, JPG o WEBP')}
+      if(file.size>5*1024*1024){input.value='';return alert('Il file supera il limite di 5 MB')}
+      const url=URL.createObjectURL(file);
+      preview.innerHTML=`<img src="${url}" alt="Anteprima">`;
+      removeFlag.value='0';
+    });
+    remove?.addEventListener('click',()=>{
+      input.value='';removeFlag.value='1';
+      preview.innerHTML='<div class="media-placeholder"><b>+</b><span>Nessuna immagine</span></div>';
+      remove.remove();
+    });
+  });
+}
+
 const initials = (name='PL') => name.split(' ').slice(0,2).map(x=>x[0]).join('').toUpperCase();
 const logo = (url,name) => url ? `<img class="logo" src="${esc(url)}" alt="${esc(name)}">` : `<div class="logo">${esc(initials(name))}</div>`;
 const avatar = (url,name) => url ? `<img class="avatar" src="${esc(url)}" alt="${esc(name)}">` : `<div class="avatar">${esc(initials(name))}</div>`;
 
+function ensureMediaStyles(){if(!document.querySelector('link[data-prime-media]')){const l=document.createElement('link');l.rel='stylesheet';l.href='/assets/media-admin.css';l.dataset.primeMedia='1';document.head.appendChild(l)}}
 function layout(content, active='home'){
   const nav = [['home','Home'],['partite','Partite'],['classifica','Classifica'],['squadre','Squadre'],['giocatori','Giocatori'],['statistiche','Statistiche'],['vota','Vota'],['news','News']];
   const mobile = [['home','⌂','Home'],['partite','⚽','Partite'],['classifica','🏆','Classifica'],['squadre','◫','Squadre'],[state.user?'dashboard':'login','◉',state.user?'Area':'Accedi']];
@@ -294,7 +363,7 @@ async function setup(){set(`<div class="auth-card card"><span class="eyebrow">Pr
 
 function adminRoleLabel(role){return ({super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'})[role]||role}
 function dashLayout(body,section='overview'){
-  const league=[['overview','Panoramica'],['seasons','Stagioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
+  const league=[['overview','Panoramica'],['seasons','Stagioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['media','Media'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
   if(state.user.role==='super_admin') league.splice(6,0,['users','Account']);
   const teamNav=[['overview','Panoramica'],['players','Rosa'],['matches','Partite'],['sponsors','Sponsor']];
   const refereeNav=[['overview','Panoramica'],['matches','Partite e referti']];
@@ -311,6 +380,7 @@ async function dashboard(section='overview'){
   if(section==='players') return managePlayers();
   if(section==='matches') return manageMatches();
   if(section==='submissions') return submissions();
+  if(section==='media') return manageMedia();
   if(section==='users') return users();
   if(section==='sponsors') return sponsors();
   if(section==='news') return manageNews();
@@ -333,13 +403,23 @@ async function adminTeams(){
   const d=await api('admin/teams');
   const rows=d.teams.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.short_name||'—')}</td><td>${esc(t.coach_name||'—')}</td><td>${t.is_active?'Attiva':'Disattiva'}</td><td><div class="admin-row-actions"><button class="btn small edit-team" data-id="${t.id}">Modifica</button><button class="btn small danger delete-team" data-id="${t.id}">Elimina</button></div></td></tr>`).join('');
   set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Squadre</h2><p>Crea, modifica o elimina tutte le squadre della piattaforma.</p></div><button class="btn primary" id="new-team">Nuova squadra</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Sigla</th><th>Allenatore</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows||'<tr><td colspan="5">Nessuna squadra.</td></tr>'}</tbody></table></div>`,'teams'),''); bindLogout();
-  const openForm=(t={})=>showForm('editor',teamForm(t),async f=>{f.is_active=f.is_active==='1'?1:0; await api(t.id?`admin/teams/${t.id}`:'admin/teams',{method:t.id?'PUT':'POST',body:JSON.stringify(f)}); adminTeams()});
+  const openForm=(t={})=>showForm('editor',teamForm(t),async(f,form)=>{
+    f.is_active=f.is_active==='1'?1:0;
+    const existing=form.querySelector('[name="existing_media_url"]')?.value||'';
+    const remove=form.querySelector('[name="remove_media"]')?.value==='1';
+    const file=form.querySelector('[name="logo_file"]')?.files?.[0];
+    f.logo_url=remove?'':await uploadMediaFile(file,'teams',existing,900);
+    if(remove&&existing)await api('admin/media/delete',{method:'POST',body:JSON.stringify({url:existing})}).catch(()=>{});
+    delete f.logo_file;delete f.existing_media_url;delete f.remove_media;
+    await api(t.id?`admin/teams/${t.id}`:'admin/teams',{method:t.id?'PUT':'POST',body:JSON.stringify(f)});
+    adminTeams();
+  });
   document.querySelector('#new-team').onclick=()=>openForm();
   document.querySelectorAll('.edit-team').forEach(b=>b.onclick=()=>openForm(d.teams.find(x=>Number(x.id)===Number(b.dataset.id))));
   document.querySelectorAll('.delete-team').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questa squadra? Verranno rimossi anche i dati collegati compatibili.')){await api(`admin/teams/${b.dataset.id}?hard=1`,{method:'DELETE'});adminTeams()}});
 }
-function teamForm(t={}){return `<div class="admin-editor-card"><h3>${t.id?'Modifica squadra':'Nuova squadra'}</h3><form class="form-grid data-form"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(t.name||'')}" required></div><div class="field"><label>Sigla</label><input class="input" name="short_name" value="${esc(t.short_name||'')}"></div><div class="field"><label>Responsabile</label><input class="input" name="manager_name" value="${esc(t.manager_name||'')}"></div><div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(t.coach_name||'')}"></div><div class="field"><label>Colore principale</label><input class="input" type="color" name="primary_color" value="${esc(t.primary_color||'#081a36')}"></div><div class="field"><label>Colore secondario</label><input class="input" type="color" name="secondary_color" value="${esc(t.secondary_color||'#ffffff')}"></div><div class="field full"><label>URL logo</label><input class="input" name="logo_url" value="${esc(t.logo_url||'')}"></div><div class="field full"><label>Descrizione</label><textarea class="input" name="description">${esc(t.description||'')}</textarea></div>${t.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${t.is_active?'checked':''}> Squadra attiva</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${t.id?'Salva modifiche':'Crea squadra'}</button></div></form></div>`}
-function showForm(id,html,handler){document.querySelector('#'+id).innerHTML=html;const form=document.querySelector('#'+id+' form');if(!form)return;form.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await handler(data,e.target)}catch(err){alert(err.message)}}}
+function teamForm(t={}){return `<div class="admin-editor-card"><h3>${t.id?'Modifica squadra':'Nuova squadra'}</h3><form class="form-grid data-form"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(t.name||'')}" required></div><div class="field"><label>Sigla</label><input class="input" name="short_name" value="${esc(t.short_name||'')}"></div><div class="field"><label>Responsabile</label><input class="input" name="manager_name" value="${esc(t.manager_name||'')}"></div><div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(t.coach_name||'')}"></div><div class="field"><label>Colore principale</label><input class="input" type="color" name="primary_color" value="${esc(t.primary_color||'#081a36')}"></div><div class="field"><label>Colore secondario</label><input class="input" type="color" name="secondary_color" value="${esc(t.secondary_color||'#ffffff')}"></div>${mediaPicker({name:'logo_file',current:t.logo_url||'',label:'Stemma squadra',shape:'logo'})}<div class="field full"><label>Descrizione</label><textarea class="input" name="description">${esc(t.description||'')}</textarea></div>${t.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${t.is_active?'checked':''}> Squadra attiva</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${t.id?'Salva modifiche':'Crea squadra'}</button></div></form></div>`}
+function showForm(id,html,handler){document.querySelector('#'+id).innerHTML=html;const form=document.querySelector('#'+id+' form');if(!form)return;bindMediaPicker(form);form.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await handler(data,e.target)}catch(err){alert(err.message)}}}
 async function managePlayers(){
   await loadTeams();
   const endpoint=['super_admin','organizer'].includes(state.user.role)?'admin/players':'team/players';
@@ -393,7 +473,17 @@ async function managePlayers(){
   bindLogout();
 
   const findPlayer=id=>players.find(p=>Number(p.id)===Number(id));
-  const openForm=(p={})=>showForm('editor',`<div class="admin-editor-card"><h3>${p.id?'Modifica giocatore':'Nuovo giocatore'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="first_name" value="${esc(p.first_name||'')}" required></div><div class="field"><label>Cognome</label><input class="input" name="last_name" value="${esc(p.last_name||'')}" required></div><div class="field"><label>Squadra</label><select class="input" name="team_id">${teams.map(t=>`<option value="${t.id}" ${Number(p.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Numero</label><input class="input" type="number" name="shirt_number" value="${p.shirt_number??''}"></div><div class="field"><label>Ruolo</label><select class="input" name="role">${['Portiere','Difensore','Centrocampista','Attaccante'].map(r=>`<option value="${r}" ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></div><div class="field"><label>Stato</label><select class="input" name="is_active"><option value="1" ${Number(p.is_active)!==0?'selected':''}>Attivo</option><option value="0" ${Number(p.is_active)===0?'selected':''}>Non attivo</option></select></div><div class="field full"><label>URL foto</label><input class="input" name="photo_url" value="${esc(p.photo_url||'')}"></div><div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Crea giocatore'}</button></div></form></div>`,async f=>{await api(p.id?`admin/players/${p.id}`:'admin/players',{method:p.id?'PUT':'POST',body:JSON.stringify(f)});managePlayers()});
+  const openForm=(p={})=>showForm('editor',`<div class="admin-editor-card"><h3>${p.id?'Modifica giocatore':'Nuovo giocatore'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="first_name" value="${esc(p.first_name||'')}" required></div><div class="field"><label>Cognome</label><input class="input" name="last_name" value="${esc(p.last_name||'')}" required></div><div class="field"><label>Squadra</label><select class="input" name="team_id">${teams.map(t=>`<option value="${t.id}" ${Number(p.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Numero</label><input class="input" type="number" name="shirt_number" value="${p.shirt_number??''}"></div><div class="field"><label>Ruolo</label><select class="input" name="role">${['Portiere','Difensore','Centrocampista','Attaccante'].map(r=>`<option value="${r}" ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></div><div class="field"><label>Stato</label><select class="input" name="is_active"><option value="1" ${Number(p.is_active)!==0?'selected':''}>Attivo</option><option value="0" ${Number(p.is_active)===0?'selected':''}>Non attivo</option></select></div>${mediaPicker({name:'photo_file',current:p.photo_url||'',label:'Foto giocatore',shape:'portrait'})}<div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Crea giocatore'}</button></div></form></div>`,async(f,form)=>{
+    const existing=form.querySelector('[name="existing_media_url"]')?.value||'';
+    const remove=form.querySelector('[name="remove_media"]')?.value==='1';
+    const file=form.querySelector('[name="photo_file"]')?.files?.[0];
+    f.photo_url=remove?'':await uploadMediaFile(file,'players',existing,1200);
+    if(remove&&existing)await api('admin/media/delete',{method:'POST',body:JSON.stringify({url:existing})}).catch(()=>{});
+    delete f.photo_file;delete f.existing_media_url;delete f.remove_media;
+    f.is_active=f.is_active==='0'?0:1;
+    await api(p.id?`admin/players/${p.id}`:'admin/players',{method:p.id?'PUT':'POST',body:JSON.stringify(f)});
+    managePlayers();
+  });
 
   const allRows=[...document.querySelectorAll('.player-row')];
   const apply=()=>{
@@ -798,7 +888,41 @@ async function manageMatches(){
 async function submissions(){const d=await api('admin/submissions');set(dashLayout(`<h2>Referti da verificare</h2><div class="grid">${d.submissions.map(s=>`<article class="card"><div class="toolbar"><div><span class="pill">${esc(s.status)}</span><h3>${esc(s.home_name)} ${s.home_score} - ${s.away_score} ${esc(s.away_name)}</h3><div class="muted">Inviato da ${esc(s.team_name)} · ${fmtDate(s.created_at)}</div></div>${s.status==='pending'?`<div><button class="btn primary approve" data-id="${s.id}">Approva</button> <button class="btn danger reject" data-id="${s.id}">Rifiuta</button></div>`:''}</div><p>${esc(s.notes||'Nessuna nota')}</p></article>`).join('')||'<div class="card empty">Nessun referto.</div>'}</div>`,'submissions'),'');bindLogout();document.querySelectorAll('.approve').forEach(b=>b.onclick=async()=>{await api(`admin/submissions/${b.dataset.id}/approve`,{method:'POST',body:'{}'});submissions()});document.querySelectorAll('.reject').forEach(b=>b.onclick=async()=>{await api(`admin/submissions/${b.dataset.id}/reject`,{method:'POST',body:'{}'});submissions()})}
 async function users(){await loadTeams();const d=await api('admin/users');const roles={super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'};set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Sicurezza e permessi</span><h2>Account</h2><p>Crea gli accessi e assegna a ciascuno solo i permessi necessari.</p></div><button class="btn primary" id="new-user">Nuovo account</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Account</th><th>Ruolo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${d.users.map(u=>`<tr><td><b>${esc(u.display_name)}</b><small class="user-email">${esc(u.email)}</small></td><td><span class="role-badge role-${esc(u.role)}">${esc(roles[u.role]||u.role)}</span></td><td>${esc(state.teams.find(t=>Number(t.id)===Number(u.team_id))?.name||'—')}</td><td>${u.is_active?'<span class="status-active">Attivo</span>':'<span class="status-disabled">Disattivo</span>'}</td><td><div class="admin-row-actions"><button class="btn small edit-user" data-id="${u.id}">Modifica</button><button class="btn small reset-user" data-id="${u.id}">Link reset</button></div></td></tr>`).join('')}</tbody></table></div>`,'users'),'');bindLogout();const openForm=(u={})=>showForm('editor',`<div class="admin-editor-card"><h3>${u.id?'Modifica account':'Nuovo account'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="display_name" value="${esc(u.display_name||'')}" required></div><div class="field"><label>Email</label><input class="input" type="email" name="email" value="${esc(u.email||'')}" required></div><div class="field"><label>Username</label><input class="input" name="username" value="${esc(u.username||'')}"></div>${u.id?'':`<div class="field"><label>Password iniziale</label><input class="input" type="password" minlength="10" name="password" required></div>`}<div class="field"><label>Ruolo</label><select class="input" name="role">${Object.entries(roles).map(([v,l])=>`<option value="${v}" ${u.role===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Squadra collegata</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(u.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>${u.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${u.is_active?'checked':''}> Account attivo</label></div>`:''}<div class="field full"><button class="btn primary">${u.id?'Salva modifiche':'Crea account'}</button></div></form></div>`,async f=>{if(u.id){f.is_active=f.is_active==='1'?1:0;await api(`admin/users/${u.id}`,{method:'PUT',body:JSON.stringify(f)})}else await api('admin/users',{method:'POST',body:JSON.stringify(f)});users()});document.querySelector('#new-user').onclick=()=>openForm();document.querySelectorAll('.edit-user').forEach(b=>b.onclick=()=>openForm(d.users.find(u=>Number(u.id)===Number(b.dataset.id))));document.querySelectorAll('.reset-user').forEach(b=>b.onclick=async()=>{const r=await api(`admin/users/${b.dataset.id}/reset-link`,{method:'POST',body:'{}'});await navigator.clipboard.writeText(r.resetUrl);alert('Link di recupero copiato. Scade tra 30 minuti.')})}
 async function sponsors(){await loadTeams();const d=await api('admin/sponsors');const rows=d.sponsors.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.level)}</td><td>${esc(x.team_name||'Lega')}</td><td>${x.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-sponsor" data-id="${x.id}">Modifica</button><button class="btn small danger delete-sponsor" data-id="${x.id}">Elimina</button></div></td></tr>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Sponsor</h2></div><button class="btn primary" id="new-sponsor">Nuovo sponsor</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows}</tbody></table></div>`,'sponsors'),'');bindLogout();const form=(x={})=>`<div class="admin-editor-card"><h3>${x.id?'Modifica sponsor':'Nuovo sponsor'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(x.name||'')}" required></div><div class="field"><label>Tipo</label><select class="input" name="level"><option value="league" ${x.level==='league'?'selected':''}>Lega</option><option value="team" ${x.level==='team'?'selected':''}>Squadra</option></select></div><div class="field"><label>Squadra</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(x.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>URL logo</label><input class="input" name="logo_url" value="${esc(x.logo_url||'')}"></div><div class="field"><label>Sito web</label><input class="input" name="website_url" value="${esc(x.website_url||'')}"></div><div class="field"><label class="admin-check"><input type="checkbox" name="is_featured" value="1" ${x.is_featured?'checked':''}> In evidenza</label></div>${x.id?`<div class="field"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${x.is_active?'checked':''}> Attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(x={})=>showForm('editor',form(x),async f=>{f.is_featured=f.is_featured==='1'?1:0;f.is_active=f.is_active==='1'?1:0;await api(x.id?`admin/sponsors/${x.id}`:'admin/sponsors',{method:x.id?'PUT':'POST',body:JSON.stringify(f)});sponsors()});document.querySelector('#new-sponsor').onclick=()=>open();document.querySelectorAll('.edit-sponsor').forEach(b=>b.onclick=()=>open(d.sponsors.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-sponsor').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo sponsor?')){await api(`admin/sponsors/${b.dataset.id}`,{method:'DELETE'});sponsors()}})}
-async function manageNews(){const d=await api('admin/news');const cards=d.news.map(n=>`<article class="card"><span class="pill">${n.is_published?'Pubblicata':'Bozza'}</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><div class="admin-row-actions"><button class="btn small edit-news" data-id="${n.id}">Modifica</button><button class="btn small danger delete-news" data-id="${n.id}">Elimina</button></div></article>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>News</h2></div><button class="btn primary" id="new-news">Nuova news</button></div><div id="editor"></div><div class="grid two">${cards}</div>`,'news'),'');bindLogout();const form=(n={})=>`<div class="admin-editor-card"><h3>${n.id?'Modifica news':'Nuova news'}</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" value="${esc(n.title||'')}" required></div><div class="field full"><label>Riassunto</label><input class="input" name="excerpt" value="${esc(n.excerpt||'')}"></div><div class="field full"><label>Copertina URL</label><input class="input" name="cover_url" value="${esc(n.cover_url||'')}"></div><div class="field full"><label>Testo</label><textarea class="input" name="body" required>${esc(n.body||'')}</textarea></div><div class="field"><label>Stato</label><select class="input" name="is_published"><option value="0" ${!n.is_published?'selected':''}>Bozza</option><option value="1" ${n.is_published?'selected':''}>Pubblicata</option></select></div><div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(n={})=>showForm('editor',form(n),async f=>{f.is_published=f.is_published==='1';await api(n.id?`admin/news/${n.id}`:'admin/news',{method:n.id?'PUT':'POST',body:JSON.stringify(f)});manageNews()});document.querySelector('#new-news').onclick=()=>open();document.querySelectorAll('.edit-news').forEach(b=>b.onclick=()=>open(d.news.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-news').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare questa news?')){await api(`admin/news/${b.dataset.id}`,{method:'DELETE'});manageNews()}})}
+
+async function manageMedia(){
+  const d=await api('admin/media');
+  const objects=[...(d.objects||[])].sort((a,b)=>new Date(b.uploaded)-new Date(a.uploaded));
+  const categoryLabels={players:'Giocatori',teams:'Squadre',sponsors:'Sponsor',news:'News',other:'Altro'};
+  const formatSize=n=>n<1024?`${n} B`:n<1048576?`${(n/1024).toFixed(1)} KB`:`${(n/1048576).toFixed(1)} MB`;
+  const cards=objects.map(o=>`<article class="media-library-card" data-category="${esc(o.category)}" data-search="${esc(o.key.toLowerCase())}">
+    <div class="media-library-image"><img src="${esc(o.url)}" alt="${esc(o.key)}" loading="lazy"></div>
+    <div class="media-library-info"><span>${esc(categoryLabels[o.category]||o.category)}</span><strong title="${esc(o.key)}">${esc(o.key.split('/').pop())}</strong><small>${formatSize(o.size)} · ${new Intl.DateTimeFormat('it-IT',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(o.uploaded))}</small></div>
+    <button class="btn small danger delete-media-object" data-key="${esc(o.key)}">Elimina</button>
+  </article>`).join('');
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Archivio R2</span><h2>Media</h2><p>Gestisci foto giocatori, stemmi, sponsor e copertine news.</p></div></div>
+    <section class="media-library-summary"><div><span>File totali</span><b>${objects.length}</b></div><div><span>Giocatori</span><b>${objects.filter(o=>o.category==='players').length}</b></div><div><span>Squadre</span><b>${objects.filter(o=>o.category==='teams').length}</b></div><div><span>Altri contenuti</span><b>${objects.filter(o=>!['players','teams'].includes(o.category)).length}</b></div></section>
+    <section class="media-library-filters"><div class="field"><label>Cerca file</label><input class="input" id="media-search" placeholder="Nome del file"></div><div class="field"><label>Categoria</label><select class="input" id="media-category"><option value="">Tutte</option>${Object.entries(categoryLabels).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div></section>
+    <div class="media-library-grid" id="media-grid">${cards||'<div class="media-library-empty">Nessun file caricato.</div>'}</div>
+    <div class="media-library-empty" id="media-empty" hidden>Nessun file corrisponde ai filtri.</div>`,'media'),'');
+  bindLogout();
+  const apply=()=>{
+    const search=(document.querySelector('#media-search').value||'').toLowerCase().trim();
+    const category=document.querySelector('#media-category').value;
+    let visible=0;
+    document.querySelectorAll('.media-library-card').forEach(card=>{
+      const show=(!search||card.dataset.search.includes(search))&&(!category||card.dataset.category===category);
+      card.hidden=!show;if(show)visible++;
+    });
+    document.querySelector('#media-empty').hidden=visible>0||objects.length===0;
+  };
+  document.querySelector('#media-search').addEventListener('input',apply);
+  document.querySelector('#media-category').addEventListener('change',apply);
+  document.querySelectorAll('.delete-media-object').forEach(btn=>btn.onclick=async()=>{
+    if(confirm('Eliminare definitivamente questo file da R2?')){await api('admin/media/delete',{method:'POST',body:JSON.stringify({key:btn.dataset.key})});manageMedia()}
+  });
+}
+
+async function manageNews(){const d=await api('admin/news');const cards=d.news.map(n=>`<article class="card"><span class="pill">${n.is_published?'Pubblicata':'Bozza'}</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><div class="admin-row-actions"><button class="btn small edit-news" data-id="${n.id}">Modifica</button><button class="btn small danger delete-news" data-id="${n.id}">Elimina</button></div></article>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>News</h2></div><button class="btn primary" id="new-news">Nuova news</button></div><div id="editor"></div><div class="grid two">${cards}</div>`,'news'),'');bindLogout();const form=(n={})=>`<div class="admin-editor-card"><h3>${n.id?'Modifica news':'Nuova news'}</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" value="${esc(n.title||'')}" required></div><div class="field full"><label>Riassunto</label><input class="input" name="excerpt" value="${esc(n.excerpt||'')}"></div>${mediaPicker({name:'cover_file',current:n.cover_url||'',label:'Immagine di copertina',shape:'cover'})}<div class="field full"><label>Testo</label><textarea class="input" name="body" required>${esc(n.body||'')}</textarea></div><div class="field"><label>Stato</label><select class="input" name="is_published"><option value="0" ${!n.is_published?'selected':''}>Bozza</option><option value="1" ${n.is_published?'selected':''}>Pubblicata</option></select></div><div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(n={})=>showForm('editor',form(n),async f=>{f.is_published=f.is_published==='1';await api(n.id?`admin/news/${n.id}`:'admin/news',{method:n.id?'PUT':'POST',body:JSON.stringify(f)});manageNews()});document.querySelector('#new-news').onclick=()=>open();document.querySelectorAll('.edit-news').forEach(b=>b.onclick=()=>open(d.news.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-news').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare questa news?')){await api(`admin/news/${b.dataset.id}`,{method:'DELETE'});manageNews()}})}
 async function managePolls(){const d=await api('admin/polls');const cards=d.polls.map(p=>`<article class="card"><span class="pill">${esc(p.status)}</span><h3>${esc(p.title)}</h3><div class="muted">${p.options.length} opzioni</div><div class="admin-row-actions"><button class="btn small edit-poll" data-id="${p.id}">Modifica</button><button class="btn small danger delete-poll" data-id="${p.id}">Elimina</button></div></article>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Votazioni</h2></div><button class="btn primary" id="new-poll">Nuova votazione</button></div><div id="editor"></div><div class="grid two">${cards}</div>`,'polls'),'');bindLogout();const form=(p={})=>`<div class="admin-editor-card"><h3>${p.id?'Modifica votazione':'Nuova votazione'}</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" value="${esc(p.title||'')}" required></div><div class="field full"><label>Descrizione</label><input class="input" name="description" value="${esc(p.description||'')}"></div><div class="field"><label>Tipo</label><select class="input" name="poll_type">${['mvp','goal','save','custom'].map(x=>`<option value="${x}" ${p.poll_type===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Stato</label><select class="input" name="status">${['draft','open','closed'].map(x=>`<option value="${x}" ${p.status===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Inizio</label><input class="input" type="datetime-local" name="starts_at" value="${esc((p.starts_at||'').slice(0,16))}" required></div><div class="field"><label>Fine</label><input class="input" type="datetime-local" name="ends_at" value="${esc((p.ends_at||'').slice(0,16))}" required></div><div class="field full"><label>Opzioni, una per riga</label><textarea class="input" name="options_text" required>${esc((p.options||[]).map(o=>o.label).join('\n'))}</textarea></div><div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(p={})=>showForm('editor',form(p),async f=>{f.options=f.options_text.split('\n').map(label=>({label:label.trim()})).filter(x=>x.label);delete f.options_text;await api(p.id?`admin/polls/${p.id}`:'admin/polls',{method:p.id?'PUT':'POST',body:JSON.stringify(f)});managePolls()});document.querySelector('#new-poll').onclick=()=>open();document.querySelectorAll('.edit-poll').forEach(b=>b.onclick=()=>open(d.polls.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-poll').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare questa votazione e tutti i voti?')){await api(`admin/polls/${b.dataset.id}`,{method:'DELETE'});managePolls()}})}
 
 async function loadUser(){try{state.user=(await api('me')).user}catch{state.user=null}}
