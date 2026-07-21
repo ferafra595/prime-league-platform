@@ -374,7 +374,7 @@ async function setup(){set(`<div class="auth-card card"><span class="eyebrow">Pr
 function adminRoleLabel(role){return ({super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'})[role]||role}
 function dashLayout(body,section='overview'){
   const league=[['overview','Panoramica'],['seasons','Stagioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['media','Media'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
-  if(state.user.role==='super_admin') league.splice(6,0,['users','Account']);
+  if(['super_admin','organizer'].includes(state.user.role)) league.splice(6,0,['users','Account']);
   const teamNav=[['overview','Panoramica'],['players','Rosa'],['matches','Partite'],['sponsors','Sponsor']];
   const refereeNav=[['overview','Panoramica'],['matches','Partite e referti']];
   const items=['super_admin','organizer'].includes(state.user.role)?league:state.user.role==='referee'?refereeNav:teamNav;
@@ -1273,7 +1273,196 @@ async function submissions(){
 
   apply();
 }
-async function users(){await loadTeams();const d=await api('admin/users');const roles={super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'};set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Sicurezza e permessi</span><h2>Account</h2><p>Crea gli accessi e assegna a ciascuno solo i permessi necessari.</p></div><button class="btn primary" id="new-user">Nuovo account</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Account</th><th>Ruolo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${d.users.map(u=>`<tr><td><b>${esc(u.display_name)}</b><small class="user-email">${esc(u.email)}</small></td><td><span class="role-badge role-${esc(u.role)}">${esc(roles[u.role]||u.role)}</span></td><td>${esc(state.teams.find(t=>Number(t.id)===Number(u.team_id))?.name||'—')}</td><td>${u.is_active?'<span class="status-active">Attivo</span>':'<span class="status-disabled">Disattivo</span>'}</td><td><div class="admin-row-actions"><button class="btn small edit-user" data-id="${u.id}">Modifica</button><button class="btn small reset-user" data-id="${u.id}">Link reset</button></div></td></tr>`).join('')}</tbody></table></div>`,'users'),'');bindLogout();const openForm=(u={})=>showForm('editor',`<div class="admin-editor-card"><h3>${u.id?'Modifica account':'Nuovo account'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="display_name" value="${esc(u.display_name||'')}" required></div><div class="field"><label>Email</label><input class="input" type="email" name="email" value="${esc(u.email||'')}" required></div><div class="field"><label>Username</label><input class="input" name="username" value="${esc(u.username||'')}"></div>${u.id?'':`<div class="field"><label>Password iniziale</label><input class="input" type="password" minlength="10" name="password" required></div>`}<div class="field"><label>Ruolo</label><select class="input" name="role">${Object.entries(roles).map(([v,l])=>`<option value="${v}" ${u.role===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Squadra collegata</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(u.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>${u.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${u.is_active?'checked':''}> Account attivo</label></div>`:''}<div class="field full"><button class="btn primary">${u.id?'Salva modifiche':'Crea account'}</button></div></form></div>`,async f=>{if(u.id){f.is_active=f.is_active==='1'?1:0;await api(`admin/users/${u.id}`,{method:'PUT',body:JSON.stringify(f)})}else await api('admin/users',{method:'POST',body:JSON.stringify(f)});users()});document.querySelector('#new-user').onclick=()=>openForm();document.querySelectorAll('.edit-user').forEach(b=>b.onclick=()=>openForm(d.users.find(u=>Number(u.id)===Number(b.dataset.id))));document.querySelectorAll('.reset-user').forEach(b=>b.onclick=async()=>{const r=await api(`admin/users/${b.dataset.id}/reset-link`,{method:'POST',body:'{}'});await navigator.clipboard.writeText(r.resetUrl);alert('Link di recupero copiato. Scade tra 30 minuti.')})}
+async function users(){
+  await loadTeams();
+  const d=await api('admin/users');
+  const accounts=d.users||[];
+  const roles={organizer:'Admin',super_admin:'Admin',team_manager:'Squadra',referee:'Arbitro'};
+  const roleDescriptions={
+    organizer:'Gestione completa della lega e dei contenuti.',
+    team_manager:'Accesso limitato alla propria squadra, rosa, partite e sponsor.',
+    referee:'Accesso alle partite assegnate e compilazione dei referti.'
+  };
+
+  if(!document.querySelector('link[data-prime-accounts]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/accounts-admin.css';
+    link.dataset.primeAccounts='1';
+    document.head.appendChild(link);
+  }
+
+  const counts={
+    all:accounts.length,
+    admin:accounts.filter(u=>['super_admin','organizer'].includes(u.role)).length,
+    team:accounts.filter(u=>u.role==='team_manager').length,
+    referee:accounts.filter(u=>u.role==='referee').length,
+    disabled:accounts.filter(u=>!Number(u.is_active)).length
+  };
+
+  const roleGroup=u=>['super_admin','organizer'].includes(u.role)?'admin':u.role==='team_manager'?'team':'referee';
+  const teamName=u=>state.teams.find(t=>Number(t.id)===Number(u.team_id))?.name||'—';
+  const initials=name=>String(name||'?').split(/\s+/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase();
+
+  const rows=accounts.map(u=>`<tr class="account-row"
+    data-role="${roleGroup(u)}"
+    data-status="${Number(u.is_active)?'active':'disabled'}"
+    data-search="${esc(`${u.display_name} ${u.email} ${u.username||''} ${teamName(u)}`.toLowerCase())}">
+    <td>
+      <div class="account-person">
+        <span class="account-avatar">${esc(initials(u.display_name))}</span>
+        <div><strong>${esc(u.display_name)}</strong><small>${esc(u.email)}</small>${u.username?`<em>@${esc(u.username)}</em>`:''}</div>
+      </div>
+    </td>
+    <td><span class="account-role role-${roleGroup(u)}">${esc(roles[u.role]||u.role)}</span></td>
+    <td>${u.role==='team_manager'?`<strong>${esc(teamName(u))}</strong>`:'<span class="muted">Non richiesta</span>'}</td>
+    <td><span class="account-last-login">${u.last_login?fmtDate(u.last_login):'Mai effettuato'}</span></td>
+    <td>${Number(u.is_active)?'<span class="account-status active">Attivo</span>':'<span class="account-status disabled">Disattivato</span>'}</td>
+    <td>
+      <div class="admin-row-actions account-actions">
+        <button class="btn small edit-user" data-id="${u.id}">Modifica</button>
+        <button class="btn small reset-user" data-id="${u.id}">Reimposta password</button>
+        ${Number(u.id)!==Number(state.user.id)?`<button class="btn small ${Number(u.is_active)?'disable-user':'enable-user'}" data-id="${u.id}">${Number(u.is_active)?'Disattiva':'Riattiva'}</button><button class="btn small danger delete-user" data-id="${u.id}">Elimina</button>`:'<span class="account-you">Il tuo account</span>'}
+      </div>
+    </td>
+  </tr>`).join('');
+
+  set(dashLayout(`<div class="admin-page-head accounts-admin-head">
+    <div><span class="eyebrow">Accessi e permessi</span><h2>Account</h2><p>Gestisci gli accessi di amministratori, squadre e arbitri.</p></div>
+    <button class="btn primary" id="new-user">Nuovo account</button>
+  </div>
+
+  <section class="accounts-summary">
+    <button class="account-summary active" data-filter-role="all"><span>Tutti</span><b>${counts.all}</b></button>
+    <button class="account-summary" data-filter-role="admin"><span>Admin</span><b>${counts.admin}</b></button>
+    <button class="account-summary" data-filter-role="team"><span>Squadre</span><b>${counts.team}</b></button>
+    <button class="account-summary" data-filter-role="referee"><span>Arbitri</span><b>${counts.referee}</b></button>
+    <button class="account-summary" data-filter-role="disabled"><span>Disattivati</span><b>${counts.disabled}</b></button>
+  </section>
+
+  <section class="accounts-permissions">
+    <article><span>A</span><div><strong>Admin</strong><p>Controllo completo di campionato, account, squadre, calendario, contenuti e referti.</p></div></article>
+    <article><span>S</span><div><strong>Squadra</strong><p>Gestione della propria rosa, dati squadra, sponsor e invio dei referti consentiti.</p></div></article>
+    <article><span>R</span><div><strong>Arbitro</strong><p>Visualizzazione delle gare assegnate e compilazione di risultati, eventi e MVP.</p></div></article>
+  </section>
+
+  <div id="editor"></div>
+
+  <section class="accounts-toolbar">
+    <div class="field"><label>Cerca account</label><input class="input" id="account-search" placeholder="Nome, email, username o squadra"></div>
+    <div class="field"><label>Stato</label><select class="input" id="account-status"><option value="">Tutti</option><option value="active">Attivi</option><option value="disabled">Disattivati</option></select></div>
+    <span id="account-count"></span>
+  </section>
+
+  <div class="admin-table-card accounts-table-card">
+    <table class="table accounts-table">
+      <thead><tr><th>Account</th><th>Ruolo</th><th>Squadra</th><th>Ultimo accesso</th><th>Stato</th><th>Azioni</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="6">Nessun account disponibile.</td></tr>'}</tbody>
+    </table>
+  </div>`,'users'),'');
+  bindLogout();
+
+  let activeRole='all';
+  const applyFilters=()=>{
+    const q=(document.querySelector('#account-search').value||'').toLowerCase().trim();
+    const status=document.querySelector('#account-status').value;
+    let visible=0;
+    document.querySelectorAll('.account-row').forEach(row=>{
+      const roleOk=activeRole==='all'||(activeRole==='disabled'?row.dataset.status==='disabled':row.dataset.role===activeRole);
+      const statusOk=!status||row.dataset.status===status;
+      const searchOk=!q||row.dataset.search.includes(q);
+      const show=roleOk&&statusOk&&searchOk;
+      row.hidden=!show;
+      if(show)visible++;
+    });
+    document.querySelector('#account-count').textContent=`${visible} ${visible===1?'account':'account'}`;
+  };
+
+  document.querySelectorAll('.account-summary').forEach(btn=>btn.onclick=()=>{
+    document.querySelectorAll('.account-summary').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');
+    activeRole=btn.dataset.filterRole;
+    applyFilters();
+  });
+  document.querySelector('#account-search').addEventListener('input',applyFilters);
+  document.querySelector('#account-status').addEventListener('change',applyFilters);
+
+  const openForm=(u={})=>{
+    const normalizedRole=['super_admin','organizer'].includes(u.role)?'organizer':(u.role||'team_manager');
+    showForm('editor',`<div class="admin-editor-card account-editor">
+      <div class="account-editor-head"><div><span class="eyebrow">${u.id?'Modifica accesso':'Nuovo accesso'}</span><h3>${u.id?esc(u.display_name):'Crea un account'}</h3></div><button type="button" class="btn small" id="close-user-editor">Chiudi</button></div>
+      <form class="form-grid" id="account-form">
+        <div class="field"><label>Nome e cognome</label><input class="input" name="display_name" value="${esc(u.display_name||'')}" required></div>
+        <div class="field"><label>Email</label><input class="input" type="email" name="email" value="${esc(u.email||'')}" required></div>
+        <div class="field"><label>Username</label><input class="input" name="username" value="${esc(u.username||'')}" placeholder="Facoltativo"></div>
+        ${u.id?'':`<div class="field"><label>Password iniziale</label><input class="input" type="password" minlength="10" name="password" required><small>Almeno 10 caratteri.</small></div>`}
+        <div class="field">
+          <label>Ruolo</label>
+          <select class="input" name="role" id="account-role">
+            <option value="organizer" ${normalizedRole==='organizer'?'selected':''}>Admin</option>
+            <option value="team_manager" ${normalizedRole==='team_manager'?'selected':''}>Squadra</option>
+            <option value="referee" ${normalizedRole==='referee'?'selected':''}>Arbitro</option>
+          </select>
+          <small id="role-description">${esc(roleDescriptions[normalizedRole]||'')}</small>
+        </div>
+        <div class="field" id="account-team-field">
+          <label>Squadra collegata</label>
+          <select class="input" name="team_id"><option value="">Seleziona squadra</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(u.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select>
+          <small>Obbligatoria soltanto per il ruolo Squadra.</small>
+        </div>
+        ${u.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${Number(u.is_active)?'checked':''}> Account attivo</label></div>`:''}
+        <div class="field full"><button class="btn primary">${u.id?'Salva modifiche':'Crea account'}</button></div>
+      </form>
+    </div>`,async f=>{
+      if(f.role==='team_manager'&&!f.team_id)throw new Error('Seleziona la squadra da collegare.');
+      if(f.role!=='team_manager')f.team_id='';
+      if(u.id){
+        f.is_active=f.is_active==='1'?1:0;
+        await api(`admin/users/${u.id}`,{method:'PUT',body:JSON.stringify(f)});
+      }else{
+        await api('admin/users',{method:'POST',body:JSON.stringify(f)});
+      }
+      users();
+    });
+
+    const roleSelect=document.querySelector('#account-role');
+    const teamField=document.querySelector('#account-team-field');
+    const roleDescription=document.querySelector('#role-description');
+    const syncRole=()=>{
+      teamField.hidden=roleSelect.value!=='team_manager';
+      roleDescription.textContent=roleDescriptions[roleSelect.value]||'';
+    };
+    roleSelect.addEventListener('change',syncRole);
+    syncRole();
+    document.querySelector('#close-user-editor').onclick=()=>document.querySelector('#editor').innerHTML='';
+    document.querySelector('#editor').scrollIntoView({behavior:'smooth',block:'start'});
+  };
+
+  document.querySelector('#new-user').onclick=()=>openForm();
+  document.querySelectorAll('.edit-user').forEach(b=>b.onclick=()=>openForm(accounts.find(u=>Number(u.id)===Number(b.dataset.id))));
+  document.querySelectorAll('.reset-user').forEach(b=>b.onclick=async()=>{
+    const r=await api(`admin/users/${b.dataset.id}/reset-link`,{method:'POST',body:'{}'});
+    try{await navigator.clipboard.writeText(r.resetUrl);alert('Link per reimpostare la password copiato. Scade tra 30 minuti.')}
+    catch{prompt('Copia questo link. Scade tra 30 minuti:',r.resetUrl)}
+  });
+  document.querySelectorAll('.disable-user,.enable-user').forEach(b=>b.onclick=async()=>{
+    const u=accounts.find(x=>Number(x.id)===Number(b.dataset.id));
+    const activate=b.classList.contains('enable-user');
+    if(confirm(`${activate?'Riattivare':'Disattivare'} l’account di ${u.display_name}?`)){
+      await api(`admin/users/${u.id}/status`,{method:'POST',body:JSON.stringify({is_active:activate?1:0})});
+      users();
+    }
+  });
+  document.querySelectorAll('.delete-user').forEach(b=>b.onclick=async()=>{
+    const u=accounts.find(x=>Number(x.id)===Number(b.dataset.id));
+    if(confirm(`Eliminare definitivamente l’account di ${u.display_name}? Questa operazione non può essere annullata.`)){
+      await api(`admin/users/${u.id}`,{method:'DELETE'});
+      users();
+    }
+  });
+
+  applyFilters();
+}
 async function sponsors(){await loadTeams();const d=await api('admin/sponsors');const rows=d.sponsors.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.level)}</td><td>${esc(x.team_name||'Lega')}</td><td>${x.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-sponsor" data-id="${x.id}">Modifica</button><button class="btn small danger delete-sponsor" data-id="${x.id}">Elimina</button></div></td></tr>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Sponsor</h2></div><button class="btn primary" id="new-sponsor">Nuovo sponsor</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows}</tbody></table></div>`,'sponsors'),'');bindLogout();const form=(x={})=>`<div class="admin-editor-card"><h3>${x.id?'Modifica sponsor':'Nuovo sponsor'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(x.name||'')}" required></div><div class="field"><label>Tipo</label><select class="input" name="level"><option value="league" ${x.level==='league'?'selected':''}>Lega</option><option value="team" ${x.level==='team'?'selected':''}>Squadra</option></select></div><div class="field"><label>Squadra</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(x.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>URL logo</label><input class="input" name="logo_url" value="${esc(x.logo_url||'')}"></div><div class="field"><label>Sito web</label><input class="input" name="website_url" value="${esc(x.website_url||'')}"></div><div class="field"><label class="admin-check"><input type="checkbox" name="is_featured" value="1" ${x.is_featured?'checked':''}> In evidenza</label></div>${x.id?`<div class="field"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${x.is_active?'checked':''}> Attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(x={})=>showForm('editor',form(x),async f=>{f.is_featured=f.is_featured==='1'?1:0;f.is_active=f.is_active==='1'?1:0;await api(x.id?`admin/sponsors/${x.id}`:'admin/sponsors',{method:x.id?'PUT':'POST',body:JSON.stringify(f)});sponsors()});document.querySelector('#new-sponsor').onclick=()=>open();document.querySelectorAll('.edit-sponsor').forEach(b=>b.onclick=()=>open(d.sponsors.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-sponsor').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo sponsor?')){await api(`admin/sponsors/${b.dataset.id}`,{method:'DELETE'});sponsors()}})}
 
 async function manageMedia(){
