@@ -137,19 +137,54 @@ async function route(request, env, path) {
     return json(await standings(env, seasonId ? Number(seasonId) : null));
   }
   if (path === 'public/teams') {
-    const rows = await env.DB.prepare(`SELECT t.*, COUNT(DISTINCT p.id) players_count FROM teams t LEFT JOIN players p ON p.team_id=t.id AND p.is_active=1 WHERE t.is_active=1 GROUP BY t.id ORDER BY t.name`).all();
-    return json({ teams:rows.results });
+    const seasonId = new URL(request.url).searchParams.get('season');
+    const tableData = await standings(env, seasonId ? Number(seasonId) : null);
+    const selected = tableData.selectedSeason;
+    if (!selected) return json({teams:[],seasons:tableData.seasons,selectedSeason:null});
+    const formRows = await env.DB.prepare(`SELECT m.home_team_id,m.away_team_id,m.home_score,m.away_score,m.match_date
+      FROM matches m WHERE m.season_id=? AND m.status='published' ORDER BY m.match_date DESC,m.id DESC`).bind(selected.id).all();
+    const forms = new Map();
+    for (const m of formRows.results) {
+      for (const [teamId,isHome] of [[m.home_team_id,true],[m.away_team_id,false]]) {
+        if (!forms.has(teamId)) forms.set(teamId,[]);
+        if (forms.get(teamId).length >= 5) continue;
+        const gf = Number(isHome ? m.home_score : m.away_score), ga = Number(isHome ? m.away_score : m.home_score);
+        forms.get(teamId).push(gf > ga ? 'V' : gf === ga ? 'N' : 'P');
+      }
+    }
+    const teams = tableData.standings.map((t,index)=>({...t,position:index+1,form:(forms.get(t.id)||[]).join('')}));
+    return json({teams,seasons:tableData.seasons,selectedSeason:selected});
   }
   if (path.startsWith('public/team/')) {
     const slug = path.split('/').pop();
-    const team = await env.DB.prepare('SELECT * FROM teams WHERE slug=? AND is_active=1').bind(slug).first();
+    const seasonId = new URL(request.url).searchParams.get('season');
+    const team = await env.DB.prepare('SELECT * FROM teams WHERE slug=?').bind(slug).first();
     if (!team) return json({error:'Squadra non trovata'},404);
-    const [players,matches,sponsors] = await Promise.all([
-      env.DB.prepare('SELECT * FROM players WHERE team_id=? AND is_active=1 ORDER BY role,shirt_number,last_name').bind(team.id).all(),
-      env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.home_team_id=? OR m.away_team_id=? ORDER BY m.match_date DESC`).bind(team.id,team.id).all(),
+    const tableData = await standings(env, seasonId ? Number(seasonId) : null);
+    const selected = tableData.selectedSeason;
+    if (!selected) return json({error:'Nessuna stagione disponibile'},404);
+    const rowIndex = tableData.standings.findIndex(t=>Number(t.id)===Number(team.id));
+    const teamStats = rowIndex >= 0 ? {...tableData.standings[rowIndex],position:rowIndex+1} : {played:0,won:0,drawn:0,lost:0,gf:0,ga:0,gd:0,points:0,position:null};
+    const [players,upcoming,recent,sponsors] = await Promise.all([
+      env.DB.prepare(`SELECT p.*,
+        COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) goals,
+        COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.event_type='goal' AND e.assist_player_id=p.id THEN e.quantity ELSE 0 END),0) assists
+        FROM players p
+        LEFT JOIN match_events e ON e.player_id=p.id OR e.assist_player_id=p.id
+        LEFT JOIN matches m ON m.id=e.match_id
+        WHERE p.team_id=? AND p.is_active=1
+        GROUP BY p.id ORDER BY CASE p.role WHEN 'Portiere' THEN 1 WHEN 'Difensore' THEN 2 WHEN 'Centrocampista' THEN 3 WHEN 'Attaccante' THEN 4 ELSE 5 END,p.shirt_number,p.last_name`).bind(selected.id,selected.id,team.id).all(),
+      env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,at.name away_name,at.slug away_slug,at.logo_url away_logo
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE m.season_id=? AND m.status='scheduled' AND (m.home_team_id=? OR m.away_team_id=?)
+        ORDER BY m.match_date ASC LIMIT 4`).bind(selected.id,team.id,team.id).all(),
+      env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,at.name away_name,at.slug away_slug,at.logo_url away_logo
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE m.season_id=? AND m.status='published' AND (m.home_team_id=? OR m.away_team_id=?)
+        ORDER BY m.match_date DESC LIMIT 5`).bind(selected.id,team.id,team.id).all(),
       env.DB.prepare("SELECT * FROM sponsors WHERE team_id=? AND level='team' AND is_active=1 ORDER BY is_featured DESC,name").bind(team.id).all()
     ]);
-    return json({team,players:players.results,matches:matches.results,sponsors:sponsors.results});
+    return json({team,stats:teamStats,seasons:tableData.seasons,selectedSeason:selected,players:players.results,upcoming:upcoming.results,recent:recent.results,sponsors:sponsors.results});
   }
   if (path === 'public/players') {
     const rows = await env.DB.prepare(`SELECT p.*,t.name team_name,t.slug team_slug,t.logo_url team_logo,
