@@ -1015,9 +1015,164 @@ async function manageMatches(){
   document.querySelector('#new-match').onclick=()=>openBasic();
   document.querySelectorAll('.edit-match-basic').forEach(btn=>btn.onclick=()=>openBasic(findMatch(btn.dataset.id)));
   document.querySelectorAll('.report-match').forEach(btn=>btn.onclick=()=>openReport(findMatch(btn.dataset.id)));
+  if(state.pendingReportMatchId){
+    const targetId=Number(state.pendingReportMatchId);
+    state.pendingReportMatchId=null;
+    const target=findMatch(targetId);
+    if(target)setTimeout(()=>openReport(target),0);
+  }
   document.querySelectorAll('.delete-match').forEach(btn=>btn.onclick=async()=>{if(confirm('Eliminare definitivamente questa partita, gli eventi e il referto collegato?')){await api(`admin/matches/${btn.dataset.id}`,{method:'DELETE'});manageMatches()}});
 }
-async function submissions(){const d=await api('admin/submissions');set(dashLayout(`<h2>Referti da verificare</h2><div class="grid">${d.submissions.map(s=>`<article class="card"><div class="toolbar"><div><span class="pill">${esc(s.status)}</span><h3>${esc(s.home_name)} ${s.home_score} - ${s.away_score} ${esc(s.away_name)}</h3><div class="muted">Inviato da ${esc(s.team_name)} · ${fmtDate(s.created_at)}</div></div>${s.status==='pending'?`<div><button class="btn primary approve" data-id="${s.id}">Approva</button> <button class="btn danger reject" data-id="${s.id}">Rifiuta</button></div>`:''}</div><p>${esc(s.notes||'Nessuna nota')}</p></article>`).join('')||'<div class="card empty">Nessun referto.</div>'}</div>`,'submissions'),'');bindLogout();document.querySelectorAll('.approve').forEach(b=>b.onclick=async()=>{await api(`admin/submissions/${b.dataset.id}/approve`,{method:'POST',body:'{}'});submissions()});document.querySelectorAll('.reject').forEach(b=>b.onclick=async()=>{await api(`admin/submissions/${b.dataset.id}/reject`,{method:'POST',body:'{}'});submissions()})}
+async function submissions(){
+  const d=await api('admin/reports');
+  const reports=[...(d.reports||[])];
+  const seasons=d.seasons||[];
+  const now=Date.now();
+
+  if(!document.querySelector('link[data-prime-reports]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/reports-admin.css';
+    link.dataset.primeReports='1';
+    document.head.appendChild(link);
+  }
+
+  const reportState=r=>{
+    if(Number(r.pending_submissions)>0)return 'pending';
+    if(r.status==='published')return 'completed';
+    if(new Date(r.match_date).getTime()<=now)return 'todo';
+    return 'future';
+  };
+  const stateLabel={todo:'Da compilare',pending:'In attesa',completed:'Completato',future:'In programma'};
+  const counts={
+    todo:reports.filter(r=>reportState(r)==='todo').length,
+    pending:reports.filter(r=>reportState(r)==='pending').length,
+    completed:reports.filter(r=>reportState(r)==='completed').length,
+    future:reports.filter(r=>reportState(r)==='future').length
+  };
+
+  const checks=r=>{
+    const out=[];
+    if(r.status==='published'){
+      out.push({ok:true,text:'Risultato pubblicato'});
+      if(Number(r.event_rows)>0)out.push({ok:true,text:`${r.event_rows} eventi registrati`});
+      else out.push({ok:false,soft:true,text:'Nessun evento inserito'});
+      if(r.mvp_player_id)out.push({ok:true,text:'MVP assegnato'});
+      else out.push({ok:false,soft:true,text:'MVP non assegnato'});
+    }else{
+      out.push({ok:false,text:'Risultato da inserire'});
+      if(Number(r.pending_submissions)>0)out.push({ok:false,soft:true,text:'Invio squadra da verificare'});
+    }
+    return out;
+  };
+
+  const card=r=>{
+    const stateName=reportState(r);
+    const score=r.status==='published'?`${r.home_score??0} – ${r.away_score??0}`:'VS';
+    const checkHtml=checks(r).map(c=>`<span class="report-check ${c.ok?'ok':c.soft?'soft':'missing'}">${c.ok?'✓':c.soft?'•':'!'} ${esc(c.text)}</span>`).join('');
+    return `<article class="report-admin-card"
+      data-state="${stateName}"
+      data-season="${r.season_id}"
+      data-team="${r.home_team_id},${r.away_team_id}"
+      data-round="${esc(r.round_name||'')}"
+      data-search="${esc(`${r.home_name} ${r.away_name} ${r.round_name||''}`.toLowerCase())}">
+      <div class="report-card-head">
+        <div><span>${esc(r.round_name||'Prime League')}</span><strong>${fmtDate(r.match_date)}</strong></div>
+        <span class="report-state ${stateName}">${stateLabel[stateName]}</span>
+      </div>
+      <div class="report-match-line">
+        <div class="report-club">${logo(r.home_logo,r.home_name)}<strong>${esc(r.home_name)}</strong></div>
+        <div class="report-score">${score}</div>
+        <div class="report-club away">${logo(r.away_logo,r.away_name)}<strong>${esc(r.away_name)}</strong></div>
+      </div>
+      <div class="report-meta">
+        <span>${esc(r.venue||'Campo da definire')}</span>
+        <span>${Number(r.event_rows)} eventi</span>
+        <span>${Number(r.assists_count)} assist</span>
+      </div>
+      <div class="report-checks">${checkHtml}</div>
+      ${Number(r.pending_submissions)>0?`<div class="report-submission-note"><strong>Invio ricevuto da ${esc(r.pending_team_name||'squadra')}</strong><span>${fmtDate(r.pending_created_at)}</span></div>`:''}
+      <div class="report-card-actions">
+        <button class="btn primary small open-report" data-id="${r.id}">${r.status==='published'?'Modifica referto':'Compila referto'}</button>
+        ${Number(r.pending_submissions)>0?`<button class="btn small approve-submission" data-id="${r.pending_submission_id}">Approva invio</button><button class="btn small danger reject-submission" data-id="${r.pending_submission_id}">Rifiuta</button>`:''}
+        <a class="btn small" href="#/partita/${r.id}">Scheda pubblica</a>
+      </div>
+    </article>`;
+  };
+
+  set(dashLayout(`<div class="admin-page-head reports-admin-head">
+      <div><span class="eyebrow">Controllo ufficiale</span><h2>Referti</h2><p>Controlla le gare da compilare, gli invii ricevuti e i referti già pubblicati.</p></div>
+    </div>
+
+    <section class="reports-summary">
+      <button type="button" class="report-summary-card active" data-tab="todo"><span>Da compilare</span><b>${counts.todo}</b></button>
+      <button type="button" class="report-summary-card" data-tab="pending"><span>In attesa</span><b>${counts.pending}</b></button>
+      <button type="button" class="report-summary-card" data-tab="completed"><span>Completati</span><b>${counts.completed}</b></button>
+      <button type="button" class="report-summary-card" data-tab="all"><span>Tutti</span><b>${reports.length}</b></button>
+    </section>
+
+    <section class="reports-filters">
+      <div class="field search-field"><label>Cerca</label><input class="input" id="reports-search" placeholder="Squadra o giornata"></div>
+      <div class="field"><label>Stagione</label><select class="input" id="reports-season"><option value="">Tutte</option>${seasons.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Squadra</label><select class="input" id="reports-team"><option value="">Tutte</option>${state.teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Giornata</label><select class="input" id="reports-round"><option value="">Tutte</option>${[...new Set(reports.map(r=>r.round_name).filter(Boolean))].map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>
+      <button class="btn small" id="reports-reset" type="button">Azzera filtri</button>
+    </section>
+
+    <div class="reports-result-bar"><span id="reports-result-count"></span><span>MVP ed eventi sono facoltativi: puoi pubblicare anche solo il risultato.</span></div>
+    <section class="reports-grid" id="reports-grid">${reports.map(card).join('')||'<div class="reports-empty">Nessuna partita disponibile.</div>'}</section>
+    <div class="reports-empty" id="reports-empty" hidden>Nessun referto corrisponde ai filtri selezionati.</div>`,'submissions'),'');
+  bindLogout();
+
+  let activeTab='todo';
+  const cards=[...document.querySelectorAll('.report-admin-card')];
+
+  const apply=()=>{
+    const search=(document.querySelector('#reports-search').value||'').toLowerCase().trim();
+    const season=document.querySelector('#reports-season').value;
+    const team=document.querySelector('#reports-team').value;
+    const round=document.querySelector('#reports-round').value;
+    let visible=0;
+    cards.forEach(card=>{
+      const tabOk=activeTab==='all'||card.dataset.state===activeTab;
+      const show=tabOk&&(!search||card.dataset.search.includes(search))&&(!season||card.dataset.season===season)&&(!team||card.dataset.team.split(',').includes(team))&&(!round||card.dataset.round===round);
+      card.hidden=!show;if(show)visible++;
+    });
+    document.querySelector('#reports-result-count').textContent=`${visible} ${visible===1?'referto':'referti'}`;
+    document.querySelector('#reports-empty').hidden=visible>0;
+  };
+
+  document.querySelectorAll('.report-summary-card').forEach(btn=>btn.onclick=()=>{
+    document.querySelectorAll('.report-summary-card').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');activeTab=btn.dataset.tab;apply();
+  });
+  ['reports-search','reports-season','reports-team','reports-round'].forEach(id=>document.querySelector('#'+id).addEventListener(id==='reports-search'?'input':'change',apply));
+  document.querySelector('#reports-reset').onclick=()=>{
+    document.querySelector('#reports-search').value='';
+    document.querySelector('#reports-season').value='';
+    document.querySelector('#reports-team').value='';
+    document.querySelector('#reports-round').value='';
+    apply();
+  };
+
+  document.querySelectorAll('.open-report').forEach(btn=>btn.onclick=()=>{
+    state.pendingReportMatchId=Number(btn.dataset.id);
+    manageMatches();
+  });
+  document.querySelectorAll('.approve-submission').forEach(btn=>btn.onclick=async()=>{
+    if(confirm('Approvare questo invio? Il risultato e gli eventi verranno pubblicati.')){
+      await api(`admin/submissions/${btn.dataset.id}/approve`,{method:'POST',body:'{}'});
+      submissions();
+    }
+  });
+  document.querySelectorAll('.reject-submission').forEach(btn=>btn.onclick=async()=>{
+    const note=prompt('Motivo del rifiuto (facoltativo):')||'';
+    await api(`admin/submissions/${btn.dataset.id}/reject`,{method:'POST',body:JSON.stringify({admin_note:note})});
+    submissions();
+  });
+
+  apply();
+}
 async function users(){await loadTeams();const d=await api('admin/users');const roles={super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'};set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Sicurezza e permessi</span><h2>Account</h2><p>Crea gli accessi e assegna a ciascuno solo i permessi necessari.</p></div><button class="btn primary" id="new-user">Nuovo account</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Account</th><th>Ruolo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${d.users.map(u=>`<tr><td><b>${esc(u.display_name)}</b><small class="user-email">${esc(u.email)}</small></td><td><span class="role-badge role-${esc(u.role)}">${esc(roles[u.role]||u.role)}</span></td><td>${esc(state.teams.find(t=>Number(t.id)===Number(u.team_id))?.name||'—')}</td><td>${u.is_active?'<span class="status-active">Attivo</span>':'<span class="status-disabled">Disattivo</span>'}</td><td><div class="admin-row-actions"><button class="btn small edit-user" data-id="${u.id}">Modifica</button><button class="btn small reset-user" data-id="${u.id}">Link reset</button></div></td></tr>`).join('')}</tbody></table></div>`,'users'),'');bindLogout();const openForm=(u={})=>showForm('editor',`<div class="admin-editor-card"><h3>${u.id?'Modifica account':'Nuovo account'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="display_name" value="${esc(u.display_name||'')}" required></div><div class="field"><label>Email</label><input class="input" type="email" name="email" value="${esc(u.email||'')}" required></div><div class="field"><label>Username</label><input class="input" name="username" value="${esc(u.username||'')}"></div>${u.id?'':`<div class="field"><label>Password iniziale</label><input class="input" type="password" minlength="10" name="password" required></div>`}<div class="field"><label>Ruolo</label><select class="input" name="role">${Object.entries(roles).map(([v,l])=>`<option value="${v}" ${u.role===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Squadra collegata</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(u.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>${u.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${u.is_active?'checked':''}> Account attivo</label></div>`:''}<div class="field full"><button class="btn primary">${u.id?'Salva modifiche':'Crea account'}</button></div></form></div>`,async f=>{if(u.id){f.is_active=f.is_active==='1'?1:0;await api(`admin/users/${u.id}`,{method:'PUT',body:JSON.stringify(f)})}else await api('admin/users',{method:'POST',body:JSON.stringify(f)});users()});document.querySelector('#new-user').onclick=()=>openForm();document.querySelectorAll('.edit-user').forEach(b=>b.onclick=()=>openForm(d.users.find(u=>Number(u.id)===Number(b.dataset.id))));document.querySelectorAll('.reset-user').forEach(b=>b.onclick=async()=>{const r=await api(`admin/users/${b.dataset.id}/reset-link`,{method:'POST',body:'{}'});await navigator.clipboard.writeText(r.resetUrl);alert('Link di recupero copiato. Scade tra 30 minuti.')})}
 async function sponsors(){await loadTeams();const d=await api('admin/sponsors');const rows=d.sponsors.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.level)}</td><td>${esc(x.team_name||'Lega')}</td><td>${x.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-sponsor" data-id="${x.id}">Modifica</button><button class="btn small danger delete-sponsor" data-id="${x.id}">Elimina</button></div></td></tr>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Sponsor</h2></div><button class="btn primary" id="new-sponsor">Nuovo sponsor</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Squadra</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows}</tbody></table></div>`,'sponsors'),'');bindLogout();const form=(x={})=>`<div class="admin-editor-card"><h3>${x.id?'Modifica sponsor':'Nuovo sponsor'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(x.name||'')}" required></div><div class="field"><label>Tipo</label><select class="input" name="level"><option value="league" ${x.level==='league'?'selected':''}>Lega</option><option value="team" ${x.level==='team'?'selected':''}>Squadra</option></select></div><div class="field"><label>Squadra</label><select class="input" name="team_id"><option value="">Nessuna</option>${state.teams.map(t=>`<option value="${t.id}" ${Number(x.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>URL logo</label><input class="input" name="logo_url" value="${esc(x.logo_url||'')}"></div><div class="field"><label>Sito web</label><input class="input" name="website_url" value="${esc(x.website_url||'')}"></div><div class="field"><label class="admin-check"><input type="checkbox" name="is_featured" value="1" ${x.is_featured?'checked':''}> In evidenza</label></div>${x.id?`<div class="field"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${x.is_active?'checked':''}> Attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(x={})=>showForm('editor',form(x),async f=>{f.is_featured=f.is_featured==='1'?1:0;f.is_active=f.is_active==='1'?1:0;await api(x.id?`admin/sponsors/${x.id}`:'admin/sponsors',{method:x.id?'PUT':'POST',body:JSON.stringify(f)});sponsors()});document.querySelector('#new-sponsor').onclick=()=>open();document.querySelectorAll('.edit-sponsor').forEach(b=>b.onclick=()=>open(d.sponsors.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-sponsor').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo sponsor?')){await api(`admin/sponsors/${b.dataset.id}`,{method:'DELETE'});sponsors()}})}
 
