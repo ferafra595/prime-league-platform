@@ -187,28 +187,66 @@ async function route(request, env, path) {
     return json({team,stats:teamStats,seasons:tableData.seasons,selectedSeason:selected,players:players.results,upcoming:upcoming.results,recent:recent.results,sponsors:sponsors.results});
   }
   if (path === 'public/players') {
-    const rows = await env.DB.prepare(`SELECT p.*,t.name team_name,t.slug team_slug,t.logo_url team_logo,
-      COALESCE(SUM(CASE WHEN e.event_type='goal' THEN e.quantity ELSE 0 END),0) goals,
-      COALESCE(SUM(CASE WHEN e.event_type='yellow' THEN e.quantity ELSE 0 END),0) yellows,
-      COALESCE(SUM(CASE WHEN e.event_type='red' THEN e.quantity ELSE 0 END),0) reds,
-      COUNT(DISTINCT CASE WHEN m.mvp_player_id=p.id THEN m.id END) mvps
-      FROM players p JOIN teams t ON t.id=p.team_id LEFT JOIN match_events e ON e.player_id=p.id LEFT JOIN matches m ON m.mvp_player_id=p.id
-      WHERE p.is_active=1 GROUP BY p.id ORDER BY p.last_name,p.first_name`).all();
-    return json({players:rows.results});
+    const seasonId = new URL(request.url).searchParams.get('season');
+    const tableData = await standings(env, seasonId ? Number(seasonId) : null);
+    const selected = tableData.selectedSeason;
+    if (!selected) return json({players:[],seasons:tableData.seasons,selectedSeason:null});
+    const rows = await env.DB.prepare(`SELECT p.*,t.name team_name,t.slug team_slug,t.logo_url team_logo,t.primary_color team_color,
+      COUNT(DISTINCT CASE WHEN m.season_id=? AND m.status='published' AND (e.player_id=p.id OR e.assist_player_id=p.id OR m.mvp_player_id=p.id) THEN m.id END) appearances,
+      COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.player_id=p.id AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) goals,
+      COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.assist_player_id=p.id AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) assists,
+      COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.player_id=p.id AND e.event_type='yellow' THEN e.quantity ELSE 0 END),0) yellows,
+      COALESCE(SUM(CASE WHEN m.season_id=? AND m.status='published' AND e.player_id=p.id AND e.event_type='red' THEN e.quantity ELSE 0 END),0) reds,
+      COUNT(DISTINCT CASE WHEN m.season_id=? AND m.status='published' AND m.mvp_player_id=p.id THEN m.id END) mvps
+      FROM players p JOIN teams t ON t.id=p.team_id
+      LEFT JOIN match_events e ON e.player_id=p.id OR e.assist_player_id=p.id
+      LEFT JOIN matches m ON m.id=e.match_id OR m.mvp_player_id=p.id
+      WHERE p.is_active=1 GROUP BY p.id
+      ORDER BY t.name,CASE p.role WHEN 'Portiere' THEN 1 WHEN 'Difensore' THEN 2 WHEN 'Centrocampista' THEN 3 WHEN 'Attaccante' THEN 4 ELSE 5 END,p.shirt_number,p.last_name,p.first_name`)
+      .bind(selected.id,selected.id,selected.id,selected.id,selected.id,selected.id).all();
+    return json({players:rows.results,seasons:tableData.seasons,selectedSeason:selected});
   }
   if (path.startsWith('public/player/')) {
     const slug = path.split('/').pop();
-    const player = await env.DB.prepare(`SELECT p.*,t.name team_name,t.slug team_slug,t.logo_url team_logo FROM players p JOIN teams t ON t.id=p.team_id WHERE p.slug=?`).bind(slug).first();
+    const seasonId = new URL(request.url).searchParams.get('season');
+    const tableData = await standings(env, seasonId ? Number(seasonId) : null);
+    const selected = tableData.selectedSeason;
+    const player = await env.DB.prepare(`SELECT p.*,t.name team_name,t.slug team_slug,t.logo_url team_logo,t.primary_color FROM players p JOIN teams t ON t.id=p.team_id WHERE p.slug=?`).bind(slug).first();
     if (!player) return json({error:'Giocatore non trovato'},404);
-    const stats = await env.DB.prepare(`SELECT
-      COALESCE(SUM(CASE WHEN event_type='goal' THEN quantity ELSE 0 END),0) goals,
-      COALESCE(SUM(CASE WHEN event_type='yellow' THEN quantity ELSE 0 END),0) yellows,
-      COALESCE(SUM(CASE WHEN event_type='red' THEN quantity ELSE 0 END),0) reds
-      FROM match_events WHERE player_id=?`).bind(player.id).first();
-    const assists = await env.DB.prepare("SELECT COALESCE(SUM(quantity),0) assists FROM match_events WHERE assist_player_id=? AND event_type='goal'").bind(player.id).first();
-    const appearances = await env.DB.prepare('SELECT COUNT(DISTINCT match_id) appearances FROM match_events WHERE player_id=? OR assist_player_id=?').bind(player.id,player.id).first();
-    const mvps = await env.DB.prepare('SELECT COUNT(*) mvps FROM matches WHERE mvp_player_id=? AND status=\'published\'').bind(player.id).first();
-    return json({player,stats:{...stats,...assists,...appearances,...mvps}});
+    if (!selected) return json({error:'Nessuna stagione disponibile'},404);
+    const aggregate = async sid => {
+      const base = await env.DB.prepare(`SELECT
+        COUNT(DISTINCT CASE WHEN m.status='published' AND (e.player_id=? OR e.assist_player_id=? OR m.mvp_player_id=?) THEN m.id END) appearances,
+        COALESCE(SUM(CASE WHEN m.status='published' AND e.player_id=? AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) goals,
+        COALESCE(SUM(CASE WHEN m.status='published' AND e.assist_player_id=? AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) assists,
+        COALESCE(SUM(CASE WHEN m.status='published' AND e.player_id=? AND e.event_type='yellow' THEN e.quantity ELSE 0 END),0) yellows,
+        COALESCE(SUM(CASE WHEN m.status='published' AND e.player_id=? AND e.event_type='red' THEN e.quantity ELSE 0 END),0) reds,
+        COUNT(DISTINCT CASE WHEN m.status='published' AND m.mvp_player_id=? THEN m.id END) mvps
+        FROM matches m LEFT JOIN match_events e ON e.match_id=m.id WHERE m.season_id=?`)
+        .bind(player.id,player.id,player.id,player.id,player.id,player.id,player.id,player.id,sid).first();
+      return base;
+    };
+    const stats = await aggregate(selected.id);
+    const scorerRankRows = await env.DB.prepare(`SELECT e.player_id,SUM(e.quantity) value FROM match_events e JOIN matches m ON m.id=e.match_id WHERE m.season_id=? AND m.status='published' AND e.event_type='goal' GROUP BY e.player_id ORDER BY value DESC`).bind(selected.id).all();
+    const assistRankRows = await env.DB.prepare(`SELECT e.assist_player_id player_id,SUM(e.quantity) value FROM match_events e JOIN matches m ON m.id=e.match_id WHERE m.season_id=? AND m.status='published' AND e.event_type='goal' AND e.assist_player_id IS NOT NULL GROUP BY e.assist_player_id ORDER BY value DESC`).bind(selected.id).all();
+    stats.rank_scorers = scorerRankRows.results.findIndex(r=>Number(r.player_id)===Number(player.id))+1 || null;
+    stats.rank_assists = assistRankRows.results.findIndex(r=>Number(r.player_id)===Number(player.id))+1 || null;
+    const recent = await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
+      COALESCE(SUM(CASE WHEN e.player_id=? AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) player_goals,
+      COALESCE(SUM(CASE WHEN e.assist_player_id=? AND e.event_type='goal' THEN e.quantity ELSE 0 END),0) player_assists,
+      COALESCE(SUM(CASE WHEN e.player_id=? AND e.event_type='yellow' THEN e.quantity ELSE 0 END),0) player_yellows,
+      COALESCE(SUM(CASE WHEN e.player_id=? AND e.event_type='red' THEN e.quantity ELSE 0 END),0) player_reds,
+      CASE WHEN m.mvp_player_id=? THEN 1 ELSE 0 END is_mvp
+      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+      LEFT JOIN match_events e ON e.match_id=m.id
+      WHERE m.season_id=? AND m.status='published' AND (EXISTS(SELECT 1 FROM match_events pe WHERE pe.match_id=m.id AND (pe.player_id=? OR pe.assist_player_id=?)) OR m.mvp_player_id=?)
+      GROUP BY m.id ORDER BY m.match_date DESC LIMIT 8`).bind(player.id,player.id,player.id,player.id,player.id,selected.id,player.id,player.id,player.id).all();
+    const career=[];
+    for (const season of tableData.seasons) {
+      const row=await aggregate(season.id);
+      career.push({season_id:season.id,season_name:season.name,team_name:player.team_name,...row});
+    }
+    return json({player,stats,recent:recent.results,career,seasons:tableData.seasons,selectedSeason:selected});
   }
   if (path === 'public/matches') {
     const rows = await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,at.name away_name,at.slug away_slug,at.logo_url away_logo,p.first_name mvp_first,p.last_name mvp_last FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN players p ON p.id=m.mvp_player_id ORDER BY m.match_date DESC`).all();
