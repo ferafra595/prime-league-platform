@@ -6,6 +6,42 @@ const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(d
 const slugify = (value = '') => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 const safeText = (value) => typeof value === 'string' ? value.trim() : value;
 
+
+async function ensureAuthSchema(env) {
+  // Compatibility layer: the original database accepts only admin/team/fan.
+  // Extended application roles are stored separately, without destructive migrations.
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_roles (
+      user_id INTEGER PRIMARY KEY,
+      role TEXT NOT NULL CHECK(role IN ('super_admin','organizer','team_manager','referee','fan')),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_by_user_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)')
+  ]);
+}
+
+function storageRole(role) {
+  if (role === 'team_manager') return 'team';
+  if (role === 'fan') return 'fan';
+  return 'admin';
+}
+
+async function setExtendedRole(env, userId, role) {
+  await env.DB.prepare(`INSERT INTO auth_roles(user_id,role,updated_at)
+    VALUES(?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id) DO UPDATE SET role=excluded.role,updated_at=CURRENT_TIMESTAMP`)
+    .bind(userId, role).run();
+}
+
 async function hashPassword(password, salt = crypto.randomUUID()) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations: 120000, hash: 'SHA-256' }, key, 256);
@@ -26,8 +62,8 @@ function cookie(name, value, maxAge = 60 * 60 * 24 * 14) {
 async function currentUser(request, env) {
   const token = (request.headers.get('cookie') || '').split(';').map(v => v.trim()).find(v => v.startsWith('pl_session='))?.split('=')[1];
   if (!token) return null;
-  return env.DB.prepare(`SELECT u.id,u.email,u.username,u.role,u.team_id,u.display_name,u.avatar_url
-    FROM sessions s JOIN users u ON u.id=s.user_id
+  return env.DB.prepare(`SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.avatar_url
+    FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN auth_roles ar ON ar.user_id=u.id
     WHERE s.id=? AND s.expires_at > datetime('now') AND u.is_active=1`).bind(token).first();
 }
 
@@ -113,24 +149,25 @@ async function route(request, env, path) {
   if (path === 'setup' && method === 'POST') {
     const data = await body(request);
     if (!env.SETUP_TOKEN || data.setupToken !== env.SETUP_TOKEN) return json({ error:'Token di configurazione non valido' }, 403);
-    const existing = await env.DB.prepare("SELECT id FROM users WHERE role IN ('admin','super_admin') LIMIT 1").first();
+    const existing = await env.DB.prepare("SELECT u.id FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id WHERE COALESCE(ar.role,u.role) IN ('admin','super_admin') LIMIT 1").first();
     if (existing) return json({ error:'Amministratore già configurato' }, 409);
     if (!data.email || !data.password || data.password.length < 8) return json({ error:'Email e password di almeno 8 caratteri sono obbligatorie' }, 400);
     const hash = await hashPassword(data.password);
-    await env.DB.prepare("INSERT INTO users(email,username,password_hash,role,display_name) VALUES(?,?,?,?,?)")
-      .bind(data.email.toLowerCase(), safeText(data.username || 'admin'), hash, 'super_admin', safeText(data.displayName || 'Super Admin')).run();
+    const created = await env.DB.prepare("INSERT INTO users(email,username,password_hash,role,display_name) VALUES(?,?,?,?,?)")
+      .bind(data.email.toLowerCase(), safeText(data.username || 'admin'), hash, 'admin', safeText(data.displayName || 'Super Admin')).run();
+    await setExtendedRole(env, created.meta.last_row_id, 'super_admin');
     return json({ ok:true });
   }
 
   if (path === 'auth/login' && method === 'POST') {
     const data = await body(request);
-    const found = await env.DB.prepare('SELECT * FROM users WHERE (email=? OR username=?) AND is_active=1').bind((data.login||'').toLowerCase(), data.login||'').first();
+    const found = await env.DB.prepare(`SELECT u.*,COALESCE(ar.role,u.role) effective_role FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id WHERE (u.email=? OR u.username=?) AND u.is_active=1`).bind((data.login||'').toLowerCase(), data.login||'').first();
     if (!found || !(await verifyPassword(data.password || '', found.password_hash))) return json({ error:'Credenziali non valide' }, 401);
     await env.DB.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now') OR (user_id=? AND created_at < datetime('now','-30 days'))").bind(found.id).run();
     const token = crypto.randomUUID() + crypto.randomUUID().replaceAll('-','');
     await env.DB.prepare("INSERT INTO sessions(id,user_id,expires_at) VALUES(?,?,datetime('now','+14 days'))").bind(token, found.id).run();
     await audit(env, found.id, 'login');
-    return json({ ok:true, user:{id:found.id,email:found.email,role:(ROLE_ALIASES[found.role]||found.role),team_id:found.team_id,display_name:found.display_name} }, 200, { 'set-cookie':cookie('pl_session',token) });
+    return json({ ok:true, user:{id:found.id,email:found.email,role:(ROLE_ALIASES[found.effective_role||found.role]||found.effective_role||found.role),team_id:found.team_id,display_name:found.display_name} }, 200, { 'set-cookie':cookie('pl_session',token) });
   }
 
   if (path === 'auth/logout' && method === 'POST') {
@@ -176,7 +213,8 @@ async function route(request, env, path) {
     if (!data.email || !data.password || data.password.length < 8 || !data.displayName) return json({error:'Dati non validi'},400);
     try {
       const hash = await hashPassword(data.password);
-      await env.DB.prepare("INSERT INTO users(email,password_hash,role,display_name) VALUES(?,?, 'fan',?)").bind(data.email.toLowerCase(),hash,safeText(data.displayName)).run();
+      const created = await env.DB.prepare("INSERT INTO users(email,password_hash,role,display_name) VALUES(?,?, 'fan',?)").bind(data.email.toLowerCase(),hash,safeText(data.displayName)).run();
+      await setExtendedRole(env, created.meta.last_row_id, 'fan');
       return json({ok:true},201);
     } catch { return json({error:'Email già registrata'},409); }
   }
@@ -544,8 +582,8 @@ async function route(request, env, path) {
   }
   if (path === 'admin/users') {
     const denied=requireAnyRole(user,'super_admin'); if(denied)return denied;
-    if(method==='GET') { const rows=(await env.DB.prepare('SELECT id,email,username,role,team_id,display_name,is_active,created_at FROM users ORDER BY role,display_name').all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
-    if(method==='POST') { const d=await body(request); if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400); const role=['super_admin','organizer','team_manager','referee','fan'].includes(d.role)?d.role:'fan'; const hash=await hashPassword(d.password); const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)').bind(d.email.toLowerCase(),d.username||null,hash,role,d.team_id?Number(d.team_id):null,d.display_name).run(); await audit(env,user.id,'create','user',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    if(method==='GET') { const rows=(await env.DB.prepare('SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.is_active,u.created_at FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id ORDER BY role,display_name').all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
+    if(method==='POST') { const d=await body(request); if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400); const role=['super_admin','organizer','team_manager','referee','fan'].includes(d.role)?d.role:'fan'; const hash=await hashPassword(d.password); const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)').bind(d.email.toLowerCase(),d.username||null,hash,storageRole(role),d.team_id?Number(d.team_id):null,d.display_name).run(); await setExtendedRole(env,result.meta.last_row_id,role); await audit(env,user.id,'create','user',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
 
   if (path.match(/^admin\/users\/\d+$/) && method==='PUT') {
@@ -554,7 +592,8 @@ async function route(request, env, path) {
     const role=['super_admin','organizer','team_manager','referee','fan'].includes(d.role)?d.role:'fan';
     if (id===user.id && d.is_active===0) return json({error:'Non puoi disattivare il tuo account'},400);
     await env.DB.prepare('UPDATE users SET display_name=?,email=?,username=?,role=?,team_id=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .bind(safeText(d.display_name),String(d.email||'').toLowerCase(),safeText(d.username||'')||null,role,d.team_id?Number(d.team_id):null,d.is_active===0?0:1,id).run();
+      .bind(safeText(d.display_name),String(d.email||'').toLowerCase(),safeText(d.username||'')||null,storageRole(role),d.team_id?Number(d.team_id):null,d.is_active===0?0:1,id).run();
+    await setExtendedRole(env,id,role);
     if(d.is_active===0) await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id).run();
     await audit(env,user.id,'update','user',id,{role,is_active:d.is_active}); return json({ok:true});
   }
@@ -589,6 +628,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
