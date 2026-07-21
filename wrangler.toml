@@ -6,3 +6,7 @@ pages_build_output_dir = "."
 binding = "DB"
 database_name = "prime-league-db"
 database_id = "bd930d71-8ef3-49b8-9abd-feeb31e5a33f"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "prime-league-media"
