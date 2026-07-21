@@ -567,7 +567,13 @@ async function manageMatches(){
     const [detail,playersData]=await Promise.all([api(`public/match/${m.id}`),api('admin/players')]);
     const current=detail.match;
     const players=(playersData.players||[]).filter(p=>[Number(current.home_team_id),Number(current.away_team_id)].includes(Number(p.team_id)));
-    let events=(detail.events||[]).map(e=>({team_id:e.team_id,player_id:e.player_id||'',assist_player_id:e.assist_player_id||'',event_type:e.event_type,quantity:Number(e.quantity||1)}));
+    let events=[];
+    (detail.events||[]).forEach(e=>{
+      events.push({team_id:e.team_id,player_id:e.player_id||'',event_type:e.event_type,quantity:Number(e.quantity||1)});
+      if(e.event_type==='goal'&&e.assist_player_id){
+        events.push({team_id:e.team_id,player_id:e.assist_player_id,event_type:'assist',quantity:Number(e.quantity||1)});
+      }
+    });
     const selectedMvpTeam=players.find(p=>Number(p.id)===Number(current.mvp_player_id))?.team_id||current.home_team_id;
 
     const playerOptions=(teamId,selected='',allowEmpty=true)=>`${allowEmpty?'<option value="">Nessuno</option>':''}${players.filter(p=>Number(p.team_id)===Number(teamId)).map(p=>`<option value="${p.id}" ${Number(selected)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}${p.shirt_number?` · #${p.shirt_number}`:''}</option>`).join('')}`;
@@ -575,26 +581,28 @@ async function manageMatches(){
     const renderEventRows=()=>{
       const box=document.querySelector('#report-events');
       if(!box)return;
-      box.innerHTML=(events.length?`<div class="report-event-labels"><span>Evento</span><span>Squadra</span><span>Giocatore</span><span>Assist</span><span>Qtà</span><span></span></div>`:'')+events.map((e,index)=>`<div class="report-event-row" data-index="${index}">
-        <select class="input event-type" aria-label="Tipo evento"><option value="goal" ${e.event_type==='goal'?'selected':''}>⚽ Gol</option><option value="yellow" ${e.event_type==='yellow'?'selected':''}>🟨 Ammonizione</option><option value="red" ${e.event_type==='red'?'selected':''}>🟥 Espulsione</option></select>
+      box.innerHTML=(events.length?`<div class="report-event-labels"><span>Evento</span><span>Squadra</span><span>Giocatore</span><span>Qtà</span><span></span></div>`:'')+events.map((e,index)=>`<div class="report-event-row" data-index="${index}">
+        <select class="input event-type" aria-label="Tipo evento">
+          <option value="goal" ${e.event_type==='goal'?'selected':''}>⚽ Gol</option>
+          <option value="assist" ${e.event_type==='assist'?'selected':''}>🎯 Assist</option>
+          <option value="yellow" ${e.event_type==='yellow'?'selected':''}>🟨 Ammonizione</option>
+          <option value="red" ${e.event_type==='red'?'selected':''}>🟥 Espulsione</option>
+        </select>
         <select class="input event-team" aria-label="Squadra"><option value="${current.home_team_id}" ${Number(e.team_id)===Number(current.home_team_id)?'selected':''}>${esc(current.home_name)}</option><option value="${current.away_team_id}" ${Number(e.team_id)===Number(current.away_team_id)?'selected':''}>${esc(current.away_name)}</option></select>
-        <select class="input event-player" aria-label="Giocatore">${playerOptions(e.team_id,e.player_id,false)}</select>
-        <select class="input event-assist" aria-label="Assist" ${e.event_type!=='goal'?'disabled':''}><option value="">${e.event_type==='goal'?'Nessun assist':'Non previsto'}</option>${players.filter(p=>Number(p.team_id)===Number(e.team_id)&&Number(p.id)!==Number(e.player_id)).map(p=>`<option value="${p.id}" ${Number(e.assist_player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}${p.shirt_number?` · #${p.shirt_number}`:''}</option>`).join('')}</select>
+        <select class="input event-player" aria-label="Giocatore"><option value="">Da selezionare</option>${players.filter(p=>Number(p.team_id)===Number(e.team_id)).map(p=>`<option value="${p.id}" ${Number(e.player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}${p.shirt_number?` · #${p.shirt_number}`:''}</option>`).join('')}</select>
         <input class="input event-quantity" type="number" min="1" value="${e.quantity||1}" title="Quantità">
         <button type="button" class="btn small danger remove-event">Rimuovi</button>
-      </div>`).join('')||'<div class="report-events-empty">Nessun evento inserito. Usa i pulsanti qui sotto.</div>';
+      </div>`).join('')||'<div class="report-events-empty">Nessun evento inserito. Puoi salvare anche soltanto il risultato.</div>';
 
       box.querySelectorAll('.report-event-row').forEach(row=>{
         const i=Number(row.dataset.index);
         const type=row.querySelector('.event-type');
         const team=row.querySelector('.event-team');
         const player=row.querySelector('.event-player');
-        const assist=row.querySelector('.event-assist');
         const quantity=row.querySelector('.event-quantity');
-        type.onchange=()=>{events[i].event_type=type.value;if(type.value!=='goal')events[i].assist_player_id='';renderEventRows()};
-        team.onchange=()=>{events[i].team_id=Number(team.value);events[i].player_id='';events[i].assist_player_id='';renderEventRows()};
-        player.onchange=()=>{events[i].player_id=player.value;if(Number(events[i].assist_player_id)===Number(player.value))events[i].assist_player_id='';renderEventRows()};
-        assist.onchange=()=>events[i].assist_player_id=assist.value;
+        type.onchange=()=>{events[i].event_type=type.value};
+        team.onchange=()=>{events[i].team_id=Number(team.value);events[i].player_id='';renderEventRows()};
+        player.onchange=()=>events[i].player_id=player.value;
         quantity.oninput=()=>events[i].quantity=Math.max(1,Number(quantity.value||1));
         row.querySelector('.remove-event').onclick=()=>{events.splice(i,1);renderEventRows()};
       });
@@ -617,7 +625,7 @@ async function manageMatches(){
           <div class="field"><label>Giocatore MVP</label><select class="input" id="report-mvp"></select></div>
         </div>
       </section>
-      <div class="report-events-head"><div><h3>Eventi della partita</h3><p>Per ogni gol puoi indicare anche l’assist. Gialli e rossi non prevedono assist.</p></div><div class="report-event-actions"><button class="btn small add-event" data-type="goal">+ Gol</button><button class="btn small add-assist" type="button">+ Assist</button><button class="btn small add-event" data-type="yellow">+ Giallo</button><button class="btn small add-event" data-type="red">+ Rosso</button></div></div>
+      <div class="report-events-head"><div><h3>Eventi della partita</h3><p>Gol, assist, ammonizioni ed espulsioni sono eventi separati e facoltativi.</p></div><div class="report-event-actions"><button class="btn small add-event" data-type="goal">+ Gol</button><button class="btn small add-event assist-button" data-type="assist">+ Assist</button><button class="btn small add-event" data-type="yellow">+ Giallo</button><button class="btn small add-event" data-type="red">+ Rosso</button></div></div>
       <div id="report-events" class="report-events"></div>
       <div class="report-save-bar"><span>Il risultato e gli eventi aggiorneranno classifica e statistiche quando la partita sarà pubblicata.</span><button class="btn primary" id="save-report">Salva referto</button></div>
     </section>`;
@@ -636,20 +644,9 @@ async function manageMatches(){
     mvpTeam.onchange=()=>{current.mvp_player_id=null;renderMvpPlayers()};
 
     document.querySelector('#close-report').onclick=()=>{document.querySelector('#editor').innerHTML=''};
-    document.querySelectorAll('.add-event').forEach(btn=>btn.onclick=()=>{events.push({team_id:Number(current.home_team_id),player_id:'',assist_player_id:'',event_type:btn.dataset.type,quantity:1});renderEventRows()});
-    document.querySelector('.add-assist').onclick=()=>{
-      const target=[...events].reverse().find(e=>e.event_type==='goal'&&!e.assist_player_id);
-      if(!target)return alert('Prima aggiungi almeno un gol. L’assist viene collegato al relativo marcatore.');
-      renderEventRows();
-      const index=events.indexOf(target);
-      const select=document.querySelector(`.report-event-row[data-index="${index}"] .event-assist`);
-      if(select){select.focus();select.scrollIntoView({behavior:'smooth',block:'center'})}
-    };
+    document.querySelectorAll('.add-event').forEach(btn=>btn.onclick=()=>{events.push({team_id:Number(current.home_team_id),player_id:'',event_type:btn.dataset.type,quantity:1});renderEventRows()});
     document.querySelector('#save-report').onclick=async()=>{
-      const invalid=events.find(e=>!e.player_id);
-      if(invalid) return alert('Seleziona un giocatore per ogni evento.');
-      const selfAssist=events.find(e=>e.event_type==='goal'&&e.assist_player_id&&Number(e.assist_player_id)===Number(e.player_id));
-      if(selfAssist) return alert('Il marcatore e il giocatore dell’assist non possono essere la stessa persona.');
+      const completedEvents=events.filter(e=>e.player_id&&Number(e.quantity||0)>0);
       const homeScore=Number(document.querySelector('#report-home-score').value||0);
       const awayScore=Number(document.querySelector('#report-away-score').value||0);
       const payload={
@@ -667,10 +664,33 @@ async function manageMatches(){
         away_score:awayScore,
         highlights_url:current.highlights_url||'',
         mvp_player_id:document.querySelector('#report-mvp').value||null,
-        events:events.map(e=>({team_id:Number(e.team_id),player_id:Number(e.player_id),assist_player_id:e.event_type==='goal'&&e.assist_player_id?Number(e.assist_player_id):null,event_type:e.event_type,quantity:Number(e.quantity||1)}))
+        events:(()=>{
+          const stored=[];
+          const teams=[Number(current.home_team_id),Number(current.away_team_id)];
+          teams.forEach(teamId=>{
+            const goalUnits=[];
+            completedEvents.filter(e=>e.event_type==='goal'&&Number(e.team_id)===teamId).forEach(e=>{
+              for(let n=0;n<Number(e.quantity||1);n++)goalUnits.push({team_id:teamId,player_id:Number(e.player_id),assist_player_id:null,event_type:'goal',quantity:1});
+            });
+            const assistUnits=[];
+            completedEvents.filter(e=>e.event_type==='assist'&&Number(e.team_id)===teamId).forEach(e=>{
+              for(let n=0;n<Number(e.quantity||1);n++)assistUnits.push(Number(e.player_id));
+            });
+            assistUnits.slice(0,goalUnits.length).forEach((playerId,index)=>goalUnits[index].assist_player_id=playerId);
+            stored.push(...goalUnits);
+            completedEvents.filter(e=>['yellow','red'].includes(e.event_type)&&Number(e.team_id)===teamId).forEach(e=>stored.push({team_id:teamId,player_id:Number(e.player_id),assist_player_id:null,event_type:e.event_type,quantity:Number(e.quantity||1)}));
+          });
+          return stored;
+        })()
       };
+      const assistsHome=completedEvents.filter(e=>e.event_type==='assist'&&Number(e.team_id)===Number(current.home_team_id)).reduce((s,e)=>s+Number(e.quantity||1),0);
+      const assistsAway=completedEvents.filter(e=>e.event_type==='assist'&&Number(e.team_id)===Number(current.away_team_id)).reduce((s,e)=>s+Number(e.quantity||1),0);
       const goalsHome=payload.events.filter(e=>e.event_type==='goal'&&Number(e.team_id)===Number(current.home_team_id)).reduce((s,e)=>s+e.quantity,0);
       const goalsAway=payload.events.filter(e=>e.event_type==='goal'&&Number(e.team_id)===Number(current.away_team_id)).reduce((s,e)=>s+e.quantity,0);
+      if(assistsHome>goalsHome||assistsAway>goalsAway){
+        const proceed=confirm('Hai inserito più assist che gol per una delle squadre. Gli assist in eccesso non potranno essere associati e non verranno salvati. Vuoi continuare?');
+        if(!proceed)return;
+      }
       if(payload.status==='published'&&(goalsHome!==homeScore||goalsAway!==awayScore)){
         const proceed=confirm(`Attenzione: gli eventi registrano ${goalsHome}-${goalsAway}, mentre il risultato inserito è ${homeScore}-${awayScore}. Vuoi salvare comunque?`);
         if(!proceed)return;
