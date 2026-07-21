@@ -239,7 +239,20 @@ async function standings(env, requestedSeasonId = null) {
 
 async function publicDashboard(env) {
   const [next, recent, top, newsRows, sponsors] = await Promise.all([
-    env.DB.prepare(`SELECT m.*, ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.status='scheduled' ORDER BY m.match_date LIMIT 4`).all(),
+    env.DB.prepare(`SELECT m.*,
+      ht.name home_name,ht.logo_url home_logo,
+      at.name away_name,at.logo_url away_logo
+      FROM matches m
+      JOIN teams ht ON ht.id=m.home_team_id
+      JOIN teams at ON at.id=m.away_team_id
+      WHERE m.status NOT IN ('published','cancelled')
+        AND datetime(m.match_date) >= datetime('now')
+        AND (
+          m.season_id=(SELECT id FROM seasons WHERE is_current=1 ORDER BY id DESC LIMIT 1)
+          OR NOT EXISTS(SELECT 1 FROM seasons WHERE is_current=1)
+        )
+      ORDER BY datetime(m.match_date) ASC,m.id ASC
+      LIMIT 4`).all(),
     env.DB.prepare(`SELECT m.*, ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.status='published' ORDER BY m.match_date DESC LIMIT 4`).all(),
     env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,COALESCE(SUM(e.quantity),0) goals FROM players p JOIN teams t ON t.id=p.team_id LEFT JOIN match_events e ON e.player_id=p.id AND e.event_type='goal' GROUP BY p.id ORDER BY goals DESC,p.last_name LIMIT 5`).all(),
     env.DB.prepare(`SELECT id,title,slug,excerpt,cover_url,published_at FROM news WHERE is_published=1 ORDER BY published_at DESC LIMIT 3`).all(),
@@ -396,7 +409,11 @@ async function route(request, env, path) {
     } catch { return json({error:'Email già registrata'},409); }
   }
 
-  if (path === 'public/home') return json(await publicDashboard(env));
+  if (path === 'public/home') {
+    const response=json(await publicDashboard(env));
+    response.headers.set('cache-control','no-store, no-cache, must-revalidate');
+    return response;
+  }
   if (path === 'public/standings') {
     const seasonId = new URL(request.url).searchParams.get('season');
     return json(await standings(env, seasonId ? Number(seasonId) : null));
