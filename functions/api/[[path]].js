@@ -830,6 +830,80 @@ async function route(request, env, path) {
     const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),d.notes||'').run(); await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true},201);
   }
 
+
+  if (path === 'admin/dashboard' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+
+    const season=await env.DB.prepare("SELECT * FROM seasons WHERE is_current=1 ORDER BY id DESC LIMIT 1").first();
+    const seasonFilter=season?' AND m.season_id=?':'';
+    const bindSeason=season?[season.id]:[];
+
+    const teamStats=await env.DB.prepare(`SELECT COUNT(*) total_teams,
+      COALESCE(SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END),0) active_teams,
+      COALESCE(SUM(CASE WHEN logo_url IS NULL OR TRIM(logo_url)='' THEN 1 ELSE 0 END),0) teams_without_logo,
+      COALESCE(SUM(CASE WHEN coach_name IS NULL OR TRIM(coach_name)='' THEN 1 ELSE 0 END),0) teams_without_coach
+      FROM teams`).first();
+
+    const playerStats=await env.DB.prepare(`SELECT COUNT(*) total_players,
+      COALESCE(SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END),0) active_players,
+      COALESCE(SUM(CASE WHEN photo_url IS NULL OR TRIM(photo_url)='' THEN 1 ELSE 0 END),0) players_without_photo
+      FROM players`).first();
+
+    const matchStats=await env.DB.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN status='published' THEN 1 ELSE 0 END),0) played_matches,
+      COALESCE(SUM(CASE WHEN status!='published' AND datetime(match_date)>datetime('now') THEN 1 ELSE 0 END),0) upcoming_matches,
+      COALESCE(SUM(CASE WHEN status!='published' AND datetime(match_date)<=datetime('now') THEN 1 ELSE 0 END),0) missing_reports,
+      COALESCE(SUM(CASE WHEN venue IS NULL OR TRIM(venue)='' THEN 1 ELSE 0 END),0) matches_without_venue
+      FROM matches m WHERE 1=1 ${seasonFilter}`).bind(...bindSeason).first();
+
+    const pendingCount=await env.DB.prepare("SELECT COUNT(*) count FROM match_submissions WHERE status='pending'").first();
+
+    const upcoming=await env.DB.prepare(`SELECT m.id,m.round_name,m.match_date,m.venue,
+      ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo
+      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+      WHERE m.status!='published' AND datetime(m.match_date)>=datetime('now') ${seasonFilter}
+      ORDER BY datetime(m.match_date),m.id LIMIT 5`).bind(...bindSeason).all();
+
+    const recent=await env.DB.prepare(`SELECT m.id,m.round_name,m.match_date,m.venue,m.home_score,m.away_score,
+      ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo
+      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+      WHERE m.status='published' ${seasonFilter}
+      ORDER BY datetime(m.match_date) DESC,m.id DESC LIMIT 4`).bind(...bindSeason).all();
+
+    const pendingReports=await env.DB.prepare(`SELECT m.id,m.round_name,m.match_date,ht.name home_name,at.name away_name,
+      CASE WHEN EXISTS(SELECT 1 FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending')
+      THEN 'pending_submission' ELSE 'missing_result' END reason
+      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+      WHERE ((m.status!='published' AND datetime(m.match_date)<=datetime('now'))
+      OR EXISTS(SELECT 1 FROM match_submissions ps WHERE ps.match_id=m.id AND ps.status='pending')) ${seasonFilter}
+      ORDER BY datetime(m.match_date) DESC LIMIT 6`).bind(...bindSeason).all();
+
+    return json({
+      season,
+      stats:{
+        total_teams:Number(teamStats?.total_teams||0),
+        active_teams:Number(teamStats?.active_teams||0),
+        total_players:Number(playerStats?.total_players||0),
+        active_players:Number(playerStats?.active_players||0),
+        played_matches:Number(matchStats?.played_matches||0),
+        upcoming_matches:Number(matchStats?.upcoming_matches||0),
+        missing_reports:Number(matchStats?.missing_reports||0),
+        pending_submissions:Number(pendingCount?.count||0),
+        current_round:upcoming.results?.[0]?.round_name||recent.results?.[0]?.round_name||''
+      },
+      alerts:{
+        teams_without_logo:Number(teamStats?.teams_without_logo||0),
+        teams_without_coach:Number(teamStats?.teams_without_coach||0),
+        players_without_photo:Number(playerStats?.players_without_photo||0),
+        matches_without_venue:Number(matchStats?.matches_without_venue||0),
+        pending_submissions:Number(pendingCount?.count||0)
+      },
+      upcoming:upcoming.results||[],
+      recent:recent.results||[],
+      pending_reports:pendingReports.results||[]
+    });
+  }
+
   if (path === 'admin/reports' && method==='GET') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     const seasonId=new URL(request.url).searchParams.get('season');
