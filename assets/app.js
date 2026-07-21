@@ -116,7 +116,31 @@ async function home(){loading();const [d,statsData,teamsData]=await Promise.all(
     tick();window.__primeCountdown&&clearInterval(window.__primeCountdown);window.__primeCountdown=setInterval(tick,1000);
   }
 }
-async function matches(){loading();const d=await api('public/matches');set(`<div class="section-head"><div><span class="eyebrow">Calendario ufficiale</span><h2>Partite</h2></div></div><div class="grid two">${d.matches.map(matchCard).join('')||'<div class="card empty">Nessuna partita.</div>'}</div>`,'partite')}
+async function matches(){
+  loading();
+  const d=await api('public/matches');
+  const all=[...(d.matches||[])].sort((a,b)=>new Date(a.match_date)-new Date(b.match_date));
+  const now=Date.now();
+  const upcoming=all.filter(m=>m.status!=='published'&&new Date(m.match_date).getTime()>=now);
+  const results=all.filter(m=>m.status==='published').sort((a,b)=>new Date(b.match_date)-new Date(a.match_date));
+  const featured=upcoming[0]||results[0]||all[0];
+  const rounds=[...new Set(all.map(m=>m.round_name).filter(Boolean))];
+  const teams=[...new Map(all.flatMap(m=>[[m.home_team_id,{id:m.home_team_id,name:m.home_name}],[m.away_team_id,{id:m.away_team_id,name:m.away_name}]]).filter(([id])=>id).map(([id,v])=>[id,v])).values()].sort((a,b)=>a.name.localeCompare(b.name));
+  const featureHtml=featured?`<section class="matches-feature">
+    <div class="matches-feature-copy"><span class="eyebrow light">${featured.status==='published'?'Ultimo risultato':'Prossima partita'}</span><h1>${esc(featured.round_name||'Prime League')}</h1><p>${fmtDate(featured.match_date)}${featured.venue?' · '+esc(featured.venue):''}</p><a class="btn white" href="#/partita/${featured.id}">Apri la partita →</a></div>
+    <a class="featured-match-card" href="#/partita/${featured.id}"><div class="featured-status">${featured.status==='published'?'RISULTATO FINALE':'IN PROGRAMMA'}</div><div class="featured-clubs"><div>${logo(featured.home_logo,featured.home_name)}<strong>${esc(featured.home_name)}</strong></div><div class="featured-score">${featured.status==='published'?`${featured.home_score}<i>-</i>${featured.away_score}`:'VS'}<small>${featured.status==='published'?'Finale':new Intl.DateTimeFormat('it-IT',{hour:'2-digit',minute:'2-digit'}).format(new Date(featured.match_date))}</small></div><div>${logo(featured.away_logo,featured.away_name)}<strong>${esc(featured.away_name)}</strong></div></div><span class="featured-link">Dettagli partita →</span></a>
+  </section>`:'';
+  const card=(m)=>`<a class="fixture-card" data-status="${m.status==='published'?'results':'upcoming'}" data-round="${esc(m.round_name||'')}" data-teams="${m.home_team_id},${m.away_team_id}" href="#/partita/${m.id}"><div class="fixture-top"><span>${esc(m.round_name||'Prime League')}</span><span class="fixture-state ${m.status==='published'?'done':'scheduled'}">${m.status==='published'?'FINALE':'IN PROGRAMMA'}</span></div><div class="fixture-body"><div class="fixture-team">${logo(m.home_logo,m.home_name)}<strong>${esc(m.home_name)}</strong></div><div class="fixture-score">${m.status==='published'?`${m.home_score}<i>-</i>${m.away_score}`:'VS'}<small>${new Intl.DateTimeFormat('it-IT',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(m.match_date))}</small></div><div class="fixture-team">${logo(m.away_logo,m.away_name)}<strong>${esc(m.away_name)}</strong></div></div><div class="fixture-bottom"><span>${esc(m.venue||'Campo da definire')}</span><b>Apri scheda →</b></div></a>`;
+  set(`${featureHtml}<section class="matches-shell"><div class="matches-heading"><div><span class="eyebrow">Calendario ufficiale</span><h2>Tutte le partite</h2><p>Consulta le prossime gare, i risultati e il calendario completo della stagione.</p></div><div class="matches-summary"><b>${all.length}</b><span>Partite</span></div></div>
+    <div class="matches-controls"><div class="matches-tabs"><button class="match-tab active" data-tab="upcoming">Prossime <span>${upcoming.length}</span></button><button class="match-tab" data-tab="results">Risultati <span>${results.length}</span></button><button class="match-tab" data-tab="all">Calendario <span>${all.length}</span></button></div><div class="matches-filters"><select id="round-filter"><option value="">Tutte le giornate</option>${rounds.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select><select id="team-filter"><option value="">Tutte le squadre</option>${teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div></div>
+    <div class="fixtures-grid" id="fixtures-grid">${all.map(card).join('')||'<div class="panel empty">Nessuna partita disponibile.</div>'}</div><div class="matches-empty" id="matches-empty" hidden>Nessuna partita corrisponde ai filtri selezionati.</div>
+  </section>`,'partite');
+  let tab=upcoming.length?'upcoming':(results.length?'results':'all');
+  const apply=()=>{const round=document.querySelector('#round-filter')?.value||'';const team=document.querySelector('#team-filter')?.value||'';let visible=0;document.querySelectorAll('.fixture-card').forEach(el=>{const okTab=tab==='all'||el.dataset.status===tab;const okRound=!round||el.dataset.round===round;const okTeam=!team||el.dataset.teams.split(',').includes(team);const show=okTab&&okRound&&okTeam;el.hidden=!show;if(show)visible++});const empty=document.querySelector('#matches-empty');if(empty)empty.hidden=visible>0};
+  document.querySelectorAll('.match-tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.match-tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');tab=btn.dataset.tab;apply()});
+  const initial=document.querySelector(`.match-tab[data-tab="${tab}"]`);if(initial){document.querySelectorAll('.match-tab').forEach(x=>x.classList.remove('active'));initial.classList.add('active')}
+  document.querySelector('#round-filter')?.addEventListener('change',apply);document.querySelector('#team-filter')?.addEventListener('change',apply);apply();
+}
 
 async function matchDetail(id){
   loading();
