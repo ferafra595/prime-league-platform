@@ -640,17 +640,40 @@ async function route(request, env, path) {
     const maxPerDay=Math.max(1,Math.min(3,Number(d.max_per_day||3)));
     const marketBreakDays=Math.max(0,Number(d.market_break_days||20));
     const rounds=roundRobin(teamIds); const returnRounds=rounds.map(r=>r.map(([h,a])=>[a,h]));
-    const all=[]; let cursor=parseLocalDate(d.start_date);
+    const all=[];
+
+    // Ogni giornata occupa una sola settimana di campionato.
+    // Le partite vengono distribuite nei giorni scelti, poi la giornata
+    // successiva parte dalla settimana seguente.
+    const nextCompetitionWeek = (referenceDate) => {
+      const next = new Date(referenceDate);
+      const mondayOffset = (next.getDay() + 6) % 7;
+      next.setDate(next.getDate() - mondayOffset + 7);
+      next.setHours(12,0,0,0);
+      return nextAllowedDate(next, allowedDays);
+    };
+
+    let cursor=nextAllowedDate(parseLocalDate(d.start_date),allowedDays);
+    let lastFirstLegMatch=null;
+
     for(let i=0;i<rounds.length;i++){
-      const sch=scheduleRoundGames(rounds[i],cursor,allowedDays,times,maxPerDay);
+      const roundStart=new Date(cursor);
+      const sch=scheduleRoundGames(rounds[i],roundStart,allowedDays,times,maxPerDay);
       sch.games.forEach(g=>all.push({round_name:`${i+1}ª Giornata`,home:g.pair[0],away:g.pair[1],date:g.date,phase:'regular'}));
-      cursor=sch.nextCursor;
+      lastFirstLegMatch=sch.games.length ? sch.games[sch.games.length-1].date : roundStart;
+      cursor=nextCompetitionWeek(roundStart);
     }
-    cursor.setDate(cursor.getDate()+marketBreakDays);
+
+    // Pausa mercato calcolata dall'ultima partita del girone di andata.
+    const restartBase=new Date(lastFirstLegMatch || cursor);
+    restartBase.setDate(restartBase.getDate()+marketBreakDays+1);
+    cursor=nextAllowedDate(restartBase,allowedDays);
+
     for(let i=0;i<returnRounds.length;i++){
-      const sch=scheduleRoundGames(returnRounds[i],cursor,allowedDays,times,maxPerDay);
+      const roundStart=new Date(cursor);
+      const sch=scheduleRoundGames(returnRounds[i],roundStart,allowedDays,times,maxPerDay);
       sch.games.forEach(g=>all.push({round_name:`${rounds.length+i+1}ª Giornata`,home:g.pair[0],away:g.pair[1],date:g.date,phase:'regular'}));
-      cursor=sch.nextCursor;
+      cursor=nextCompetitionWeek(roundStart);
     }
     if(d.end_date){ const end=parseLocalDate(d.end_date); if(all.some(x=>x.date>end)) return json({error:'Il periodo indicato è troppo breve per tutte le partite. Estendi la data finale o aumenta le partite per sera.'},400); }
     if(existing){
