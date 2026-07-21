@@ -1,0 +1,115 @@
+
+/* Fascia partite Home: prime gare future, ordinate dal calendario */
+
+.score-ribbon{
+  overflow:hidden;
+}
+
+.score-scroll{
+  display:grid !important;
+  grid-template-columns:repeat(5,minmax(0,1fr)) !important;
+  width:100%;
+  overflow:visible !important;
+}
+
+.score-scroll .mini-match{
+  display:block;
+  min-width:0 !important;
+  padding:18px 20px;
+  border-right:1px solid #dbe4ef;
+  text-decoration:none;
+  background:#fff;
+  transition:background .18s ease,transform .18s ease;
+}
+
+.score-scroll .mini-match:last-child{
+  border-right:0;
+}
+
+.score-scroll .mini-match:hover{
+  background:#f7faff;
+}
+
+.score-scroll .mini-match.next-highlight{
+  background:#f4f8ff;
+  box-shadow:inset 0 3px 0 #145dff;
+}
+
+.mini-match-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:13px;
+}
+
+.mini-match-head span{
+  color:#68778c;
+  font-size:11px;
+  font-weight:800;
+}
+
+.mini-match-head small{
+  color:#68778c;
+  font-size:11px;
+  white-space:nowrap;
+}
+
+.score-scroll .mini-score{
+  display:grid !important;
+  grid-template-columns:34px 22px minmax(0,1fr);
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  margin-top:8px;
+}
+
+.score-scroll .mini-score b{
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  border-radius:10px;
+  background:#edf3ff;
+  color:#145dff;
+  font-size:11px;
+}
+
+.score-scroll .mini-score strong{
+  text-align:center;
+  font-size:12px;
+  color:#07172f;
+}
+
+.score-scroll .mini-score span{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:#07172f;
+  font-weight:800;
+}
+
+@media(max-width:1250px){
+  .score-scroll{
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+  }
+
+  .score-scroll .mini-match:nth-child(n+4){
+    display:none;
+  }
+}
+
+@media(max-width:760px){
+  .score-scroll{
+    display:flex !important;
+    overflow-x:auto !important;
+    scroll-snap-type:x mandatory;
+  }
+
+  .score-scroll .mini-match{
+    display:block !important;
+    flex:0 0 82%;
+    scroll-snap-align:start;
+  }
+}

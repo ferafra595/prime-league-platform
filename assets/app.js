@@ -140,12 +140,21 @@ function standingsTable(rows){return `<div class="table-wrap"><table class="tabl
   },60000);
 }
 
-async function home(){loading();const [d,statsData,teamsData]=await Promise.all([api('public/home'),api('public/stats'),api('public/teams')]);
+async function home(){
+  loading();
+  if(!document.querySelector('link[data-prime-home-matches]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/home-matches.css';
+    link.dataset.primeHomeMatches='1';
+    document.head.appendChild(link);
+  }
+  const [d,statsData,teamsData]=await Promise.all([api('public/home'),api('public/stats'),api('public/teams')]);
   const homeTeams = teamsData.teams || [];
   const next=d.next?.[0];
   const recent=d.recent?.[0];
   const compactStandings=d.standings.slice(0,6);
-  const quickMatches=[...(d.next||[]).slice(0,3),...(d.recent||[]).slice(0,2)];
+  const quickMatches=(d.next||[]).slice(0,5);
   const statRows=(rows=[])=>rows.slice(0,3);
   const emptyPlayer={first_name:'Giocatore',last_name:'',team_name:'Squadra',photo_url:'',team_logo:'',slug:'',value:0};
   const padRows=(rows=[])=>[...rows,...Array(Math.max(0,3-rows.length)).fill(emptyPlayer)].slice(0,3);
@@ -173,7 +182,11 @@ async function home(){loading();const [d,statsData,teamsData]=await Promise.all(
 
   <section class="score-ribbon">
     <div class="score-ribbon-head"><strong>Partite</strong><a href="#/partite">Vedi calendario completo</a></div>
-    <div class="score-scroll">${quickMatches.length?quickMatches.map(m=>`<article class="mini-match"><div><span>${esc(m.round_name||'Prime League')}</span><small>${fmtDate(m.match_date)}</small></div><div class="mini-score"><b>${esc(initials(m.home_name))}</b><strong>${m.status==='published'?m.home_score:'-'}</strong><span>${esc(m.home_name)}</span></div><div class="mini-score"><b>${esc(initials(m.away_name))}</b><strong>${m.status==='published'?m.away_score:'-'}</strong><span>${esc(m.away_name)}</span></div></article>`).join(''):'<div class="empty">Nessuna partita disponibile.</div>'}</div>
+    <div class="score-scroll">${quickMatches.length?quickMatches.map((m,index)=>`<a class="mini-match ${index===0?'next-highlight':''}" href="#/partita/${m.id}">
+      <div class="mini-match-head"><span>${esc(m.round_name||'Prime League')}</span><small>${fmtDate(m.match_date)}</small></div>
+      <div class="mini-score"><b>${esc(initials(m.home_name))}</b><strong>VS</strong><span>${esc(m.home_name)}</span></div>
+      <div class="mini-score"><b>${esc(initials(m.away_name))}</b><strong></strong><span>${esc(m.away_name)}</span></div>
+    </a>`).join(''):'<div class="empty">Nessuna partita disponibile.</div>'}</div>
   </section>
 
   <section class="dashboard-grid">
