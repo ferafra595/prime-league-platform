@@ -115,7 +115,14 @@ function layout(content, active='home'){
     </div><div class="footer-bottom"><span>© 2026 Prime League. Tutti i diritti riservati.</span><div><a href="#/home">Avviso legale</a><a href="#/home">Privacy e cookie</a><a href="#/home">Segnalazioni</a></div></div></footer>
   </div>`;
 }
-function set(content,active){app.innerHTML=layout(content,active);window.scrollTo(0,0)}
+function set(content,active){
+  if(active!=='home'&&window.__primeHomeRefresh){
+    clearTimeout(window.__primeHomeRefresh);
+    window.__primeHomeRefresh=null;
+  }
+  app.innerHTML=layout(content,active);
+  window.scrollTo(0,0);
+}
 function loading(){app.innerHTML='<div class="loader"></div>'}
 function message(text,type='notice'){return `<div class="notice ${type}">${esc(text)}</div>`}
 
@@ -123,7 +130,15 @@ function matchCard(m){
   const score = m.status==='published' ? `${m.home_score} - ${m.away_score}` : 'VS';
   return `<a class="card match-card-link" href="#/partita/${m.id}"><div class="match"><div class="team-side">${logo(m.home_logo,m.home_name)}<span>${esc(m.home_name)}</span></div><div class="score">${score}</div><div class="team-side away"><span>${esc(m.away_name)}</span>${logo(m.away_logo,m.away_name)}</div></div><div class="meta">${esc(m.round_name||'')} · ${fmtDate(m.match_date)}${m.venue?' · '+esc(m.venue):''}</div><div class="match-card-cta">Apri scheda partita →</div></a>`;
 }
-function standingsTable(rows){return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th></tr></thead><tbody>${rows.map((t,i)=>`<tr><td class="rank">${i+1}</td><td><a href="#/squadra/${t.slug}"><b>${esc(t.name)}</b></a></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td>${t.gd}</td><td><b>${t.points}</b></td></tr>`).join('')}</tbody></table></div>`}
+function standingsTable(rows){return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th></tr></thead><tbody>${rows.map((t,i)=>`<tr><td class="rank">${i+1}</td><td><a href="#/squadra/${t.slug}"><b>${esc(t.name)}</b></a></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td>${t.gd}</td><td><b>${t.points}</b></td></tr>`).join('')}</tbody></table></div>`
+  // Aggiorna automaticamente il riquadro della prossima partita.
+  // Il controllo periodico permette alla home di seguire il calendario
+  // senza richiedere un refresh manuale del browser.
+  if(window.__primeHomeRefresh)clearTimeout(window.__primeHomeRefresh);
+  window.__primeHomeRefresh=setTimeout(()=>{
+    if(location.hash==='#/home'||location.hash===''||location.hash==='#/')home();
+  },60000);
+}
 
 async function home(){loading();const [d,statsData,teamsData]=await Promise.all([api('public/home'),api('public/stats'),api('public/teams')]);
   const homeTeams = teamsData.teams || [];
