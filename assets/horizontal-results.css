@@ -1,0 +1,169 @@
+
+/* Risultati e partite sempre disposti in orizzontale:
+   squadra casa | risultato | squadra ospite */
+
+.fixture-card .fixture-body{
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) !important;
+  align-items:center !important;
+  gap:24px !important;
+  min-height:150px;
+  padding:26px 0 !important;
+}
+
+.fixture-card .fixture-team,
+.fixture-card .fixture-team:last-child{
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:10px !important;
+  min-width:0;
+  text-align:center !important;
+}
+
+.fixture-card .fixture-team .logo{
+  width:72px !important;
+  height:72px !important;
+  flex:0 0 72px !important;
+  border-radius:18px;
+  object-fit:contain;
+}
+
+.fixture-card .fixture-team strong{
+  display:block;
+  width:100%;
+  max-width:190px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:16px;
+  line-height:1.25;
+}
+
+.fixture-card .fixture-score{
+  display:flex !important;
+  flex-direction:row !important;
+  flex-wrap:wrap;
+  align-items:center !important;
+  justify-content:center !important;
+  min-width:112px;
+  font-size:34px !important;
+  line-height:1 !important;
+  font-weight:900;
+  white-space:nowrap;
+}
+
+.fixture-card .fixture-score i{
+  display:inline !important;
+  margin:0 9px !important;
+  font-style:normal;
+  color:#aab4c4;
+}
+
+.fixture-card .fixture-score small{
+  flex-basis:100%;
+  display:block;
+  margin-top:12px;
+  text-align:center;
+  font-size:12px;
+  line-height:1.2;
+  font-weight:700;
+  color:#7a8799;
+  white-space:nowrap;
+}
+
+/* Migliore equilibrio visivo per i risultati conclusi */
+.fixture-result-card .fixture-body{
+  min-height:165px;
+}
+
+.fixture-result-card .fixture-score{
+  padding:10px 14px;
+  border-radius:15px;
+  background:#f4f7fb;
+}
+
+/* Tablet */
+@media (max-width:900px){
+  .fixture-card .fixture-body{
+    grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr) !important;
+    gap:14px !important;
+    min-height:132px;
+    padding:20px 0 !important;
+  }
+
+  .fixture-card .fixture-team .logo{
+    width:60px !important;
+    height:60px !important;
+    flex-basis:60px !important;
+  }
+
+  .fixture-card .fixture-score{
+    min-width:92px;
+    font-size:29px !important;
+  }
+}
+
+/* Smartphone: il risultato resta orizzontale */
+@media (max-width:600px){
+  .fixture-card{
+    padding:14px !important;
+  }
+
+  .fixture-card .fixture-body{
+    grid-template-columns:minmax(0,1fr) 70px minmax(0,1fr) !important;
+    gap:7px !important;
+    min-height:112px;
+    padding:15px 0 !important;
+  }
+
+  .fixture-card .fixture-team{
+    gap:7px !important;
+  }
+
+  .fixture-card .fixture-team .logo{
+    width:48px !important;
+    height:48px !important;
+    flex:0 0 48px !important;
+    border-radius:14px;
+  }
+
+  .fixture-card .fixture-team strong{
+    max-width:110px;
+    font-size:13px;
+    line-height:1.2;
+    white-space:normal;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+  }
+
+  .fixture-card .fixture-score{
+    min-width:70px;
+    padding:8px 6px;
+    font-size:24px !important;
+  }
+
+  .fixture-card .fixture-score i{
+    margin:0 4px !important;
+  }
+
+  .fixture-card .fixture-score small{
+    margin-top:7px;
+    font-size:10px;
+    white-space:normal;
+  }
+
+  .fixture-card .fixture-top,
+  .fixture-card .fixture-bottom{
+    gap:8px;
+  }
+
+  .fixture-card .fixture-bottom span{
+    max-width:62%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+}
