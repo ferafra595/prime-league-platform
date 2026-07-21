@@ -213,7 +213,27 @@ async function matchDetail(id){
   const share=document.querySelector('#share-match');
   if(share)share.onclick=async()=>{const data={title:`${m.home_name} - ${m.away_name}`,text:`Prime League: ${m.home_name} ${published?m.home_score+'-'+m.away_score:'vs'} ${m.away_name}`,url:location.href};if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(location.href);share.textContent='Link copiato'}};
 }
-async function table(){loading();const d=await api('public/standings');set(`<div class="section-head"><div><span class="eyebrow">Prime League</span><h2>Classifica</h2></div></div>${standingsTable(d.standings)}`,'classifica')}
+function qualificationLabel(index){
+  if(index===0)return '<span class="qualification-badge finalist">Finalista diretta</span>';
+  if(index>=1&&index<=4)return '<span class="qualification-badge playoff">Playoff</span>';
+  return '';
+}
+function gdClass(value){return Number(value)>0?'positive':Number(value)<0?'negative':'neutral'}
+function premiumStandings(rows){
+  return `<div class="standings-desktop"><div class="premium-table-wrap"><table class="premium-table"><thead><tr><th>Pos.</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>PT</th></tr></thead><tbody>${rows.map((t,i)=>`<tr class="standing-row ${i===0?'direct-finalist':i<=4?'playoff-zone':''}" data-href="#/squadra/${t.slug}" tabindex="0"><td><span class="position-number">${i+1}</span></td><td><div class="standing-team">${logo(t.logo_url,t.name)}<div><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div></div></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td><span class="goal-difference ${gdClass(t.gd)}">${Number(t.gd)>0?'+':''}${t.gd}</span></td><td><span class="points-value">${t.points}</span></td></tr>`).join('')}</tbody></table></div></div>
+  <div class="standings-mobile">${rows.map((t,i)=>`<a class="standing-mobile-card ${i===0?'direct-finalist':i<=4?'playoff-zone':''}" href="#/squadra/${t.slug}"><div class="standing-mobile-head"><span class="position-number">${i+1}</span>${logo(t.logo_url,t.name)}<div class="standing-mobile-name"><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div><span class="mobile-points"><b>${t.points}</b><small>PT</small></span></div><div class="standing-mobile-stats"><span><b>${t.played}</b><small>PG</small></span><span><b>${t.won}</b><small>V</small></span><span><b>${t.drawn}</b><small>N</small></span><span><b>${t.lost}</b><small>P</small></span><span><b>${t.gf}</b><small>GF</small></span><span><b>${t.ga}</b><small>GS</small></span><span class="${gdClass(t.gd)}"><b>${Number(t.gd)>0?'+':''}${t.gd}</b><small>DR</small></span></div></a>`).join('')}</div>`;
+}
+async function table(seasonId=''){
+  loading();
+  const d=await api(`public/standings${seasonId?`?season=${encodeURIComponent(seasonId)}`:''}`);
+  const season=d.selectedSeason||{};
+  const options=(d.seasons||[]).map(s=>`<option value="${s.id}" ${Number(s.id)===Number(season.id)?'selected':''}>${esc(s.name)}</option>`).join('');
+  set(`<section class="standings-hero"><div><span class="eyebrow light">Classifica ufficiale</span><h1>Prime League</h1><p>Posizioni e risultati aggiornati automaticamente dopo la pubblicazione di ogni partita.</p></div><div class="season-selector-card"><label for="standings-season">Stagione</label><select id="standings-season" class="input">${options}</select><small>Consulta anche le classifiche delle stagioni precedenti.</small></div></section>
+  <section class="standings-content"><div class="standings-title-row"><div><span class="eyebrow">${esc(season.competition_name||'Prime League')}</span><h2>Classifica ${esc(season.name||'')}</h2></div><div class="qualification-legend"><span><i class="legend-finalist"></i>Finalista diretta</span><span><i class="legend-playoff"></i>Qualificazione playoff</span></div></div>
+  ${d.standings?.length?premiumStandings(d.standings):'<div class="card empty">Nessun risultato disponibile per questa stagione.</div>'}</section>`,'classifica');
+  const selector=document.querySelector('#standings-season'); if(selector)selector.onchange=()=>table(selector.value);
+  document.querySelectorAll('.standing-row').forEach(row=>{const open=()=>location.hash=row.dataset.href;row.onclick=open;row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}}});
+}
 async function teams(){loading();const d=await api('public/teams');set(`<div class="section-head"><div><span class="eyebrow">Club</span><h2>Squadre</h2></div></div><div class="grid three">${d.teams.map(t=>`<a class="card team-card" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<div><h3>${esc(t.name)}</h3><div class="muted">${t.players_count} giocatori</div></div></a>`).join('')}</div>`,'squadre')}
 async function team(slug){loading();const d=await api(`public/team/${slug}`);set(`<section class="hero" style="padding:28px"><div class="team-card">${logo(d.team.logo_url,d.team.name)}<div><span class="eyebrow">Squadra</span><h1 style="font-size:clamp(2rem,5vw,4rem);margin:8px 0">${esc(d.team.name)}</h1><div class="muted">Allenatore: ${esc(d.team.coach_name||'—')} · Responsabile: ${esc(d.team.manager_name||'—')}</div></div></div></section>
 <section class="section"><div class="section-head"><h2>Rosa</h2></div><div class="grid three">${d.players.map(p=>`<a class="card player-card" href="#/giocatore/${p.slug}">${avatar(p.photo_url,`${p.first_name} ${p.last_name}`)}<div><b>${esc(p.first_name)} ${esc(p.last_name)}</b><div class="muted">#${p.shirt_number||'—'} · ${esc(p.role)}</div></div></a>`).join('')||'<div class="card empty">Rosa non disponibile.</div>'}</div></section>
