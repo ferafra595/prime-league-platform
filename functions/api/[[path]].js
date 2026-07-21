@@ -46,18 +46,33 @@ async function audit(env, userId, action, entityType = null, entityId = null, de
     .bind(userId || null, action, entityType, entityId ? String(entityId) : null, details ? JSON.stringify(details) : null).run();
 }
 
-async function standings(env) {
-  const teams = await env.DB.prepare('SELECT id,name,slug,short_name,logo_url,primary_color FROM teams WHERE is_active=1 ORDER BY name').all();
-  const matches = await env.DB.prepare("SELECT home_team_id,away_team_id,home_score,away_score FROM matches WHERE status='published'").all();
+async function standings(env, requestedSeasonId = null) {
+  const seasons = await env.DB.prepare(`SELECT s.id,s.name,s.start_date,s.end_date,s.is_current,c.name competition_name
+    FROM seasons s JOIN competitions c ON c.id=s.competition_id
+    ORDER BY s.is_current DESC,COALESCE(s.start_date,'') DESC,s.id DESC`).all();
+  const selected = requestedSeasonId
+    ? seasons.results.find(s => Number(s.id) === Number(requestedSeasonId))
+    : (seasons.results.find(s => Number(s.is_current) === 1) || seasons.results[0]);
+  if (!selected) return { standings:[], seasons:[], selectedSeason:null };
+
+  const teams = await env.DB.prepare(`SELECT DISTINCT t.id,t.name,t.slug,t.short_name,t.logo_url,t.primary_color
+    FROM teams t
+    LEFT JOIN matches mh ON mh.home_team_id=t.id AND mh.season_id=?
+    LEFT JOIN matches ma ON ma.away_team_id=t.id AND ma.season_id=?
+    WHERE t.is_active=1 OR mh.id IS NOT NULL OR ma.id IS NOT NULL
+    ORDER BY t.name`).bind(selected.id,selected.id).all();
+  const matches = await env.DB.prepare(`SELECT home_team_id,away_team_id,home_score,away_score
+    FROM matches WHERE status='published' AND season_id=?`).bind(selected.id).all();
   const table = new Map(teams.results.map(t => [t.id, { ...t, played:0, won:0, drawn:0, lost:0, gf:0, ga:0, gd:0, points:0 }]));
   for (const m of matches.results) {
     const h = table.get(m.home_team_id), a = table.get(m.away_team_id); if (!h || !a) continue;
-    h.played++; a.played++; h.gf += m.home_score; h.ga += m.away_score; a.gf += m.away_score; a.ga += m.home_score;
+    h.played++; a.played++; h.gf += Number(m.home_score||0); h.ga += Number(m.away_score||0); a.gf += Number(m.away_score||0); a.ga += Number(m.home_score||0);
     if (m.home_score > m.away_score) { h.won++; h.points += 3; a.lost++; }
     else if (m.home_score < m.away_score) { a.won++; a.points += 3; h.lost++; }
     else { h.drawn++; a.drawn++; h.points++; a.points++; }
   }
-  return [...table.values()].map(t => ({...t, gd:t.gf-t.ga})).sort((a,b) => b.points-a.points || b.gd-a.gd || b.gf-a.gf || a.name.localeCompare(b.name));
+  const rows=[...table.values()].map(t => ({...t, gd:t.gf-t.ga})).sort((a,b) => b.points-a.points || b.gd-a.gd || b.gf-a.gf || a.name.localeCompare(b.name));
+  return { standings:rows, seasons:seasons.results, selectedSeason:selected };
 }
 
 async function publicDashboard(env) {
@@ -68,7 +83,7 @@ async function publicDashboard(env) {
     env.DB.prepare(`SELECT id,title,slug,excerpt,cover_url,published_at FROM news WHERE is_published=1 ORDER BY published_at DESC LIMIT 3`).all(),
     env.DB.prepare(`SELECT * FROM sponsors WHERE level='league' AND is_active=1 ORDER BY is_featured DESC,name`).all()
   ]);
-  return { next:next.results, recent:recent.results, topScorers:top.results, news:newsRows.results, sponsors:sponsors.results, standings:await standings(env) };
+  const currentTable=await standings(env); return { next:next.results, recent:recent.results, topScorers:top.results, news:newsRows.results, sponsors:sponsors.results, standings:currentTable.standings };
 }
 
 async function route(request, env, path) {
@@ -117,7 +132,10 @@ async function route(request, env, path) {
   }
 
   if (path === 'public/home') return json(await publicDashboard(env));
-  if (path === 'public/standings') return json({ standings:await standings(env) });
+  if (path === 'public/standings') {
+    const seasonId = new URL(request.url).searchParams.get('season');
+    return json(await standings(env, seasonId ? Number(seasonId) : null));
+  }
   if (path === 'public/teams') {
     const rows = await env.DB.prepare(`SELECT t.*, COUNT(DISTINCT p.id) players_count FROM teams t LEFT JOIN players p ON p.team_id=t.id AND p.is_active=1 WHERE t.is_active=1 GROUP BY t.id ORDER BY t.name`).all();
     return json({ teams:rows.results });
