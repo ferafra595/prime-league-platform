@@ -946,24 +946,74 @@ async function route(request, env, path) {
     else await env.DB.prepare("UPDATE match_submissions SET status='rejected',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").bind(d.admin_note||'',id).run(); await audit(env,user.id,action,'match_submission',id,d); return json({ok:true});
   }
   if (path === 'admin/users') {
-    const denied=requireAnyRole(user,'super_admin'); if(denied)return denied;
-    if(method==='GET') { const rows=(await env.DB.prepare('SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.is_active,u.created_at FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id ORDER BY role,display_name').all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
-    if(method==='POST') { const d=await body(request); if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400); const role=['super_admin','organizer','team_manager','referee','fan'].includes(d.role)?d.role:'fan'; const hash=await hashPassword(d.password); const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)').bind(d.email.toLowerCase(),d.username||null,hash,storageRole(role),d.team_id?Number(d.team_id):null,d.display_name).run(); await setExtendedRole(env,result.meta.last_row_id,role); await audit(env,user.id,'create','user',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    if(method==='GET') { const rows=(await env.DB.prepare(`SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.is_active,u.created_at,
+      (SELECT MAX(a.created_at) FROM audit_log a WHERE a.user_id=u.id AND a.action='login') last_login
+      FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id ORDER BY role,display_name`).all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
+    if(method==='POST') {
+      const d=await body(request);
+      if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400);
+      const role=['organizer','team_manager','referee'].includes(d.role)?d.role:'team_manager';
+      if(role==='team_manager'&&!d.team_id)return json({error:'Per un account Squadra devi selezionare una squadra'},400);
+      const duplicate=await env.DB.prepare('SELECT id FROM users WHERE lower(email)=lower(?) OR (? IS NOT NULL AND username=?) LIMIT 1').bind(d.email,d.username||null,d.username||null).first();
+      if(duplicate)return json({error:'Email o username già utilizzati'},409);
+      const hash=await hashPassword(d.password);
+      const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)')
+        .bind(d.email.toLowerCase(),safeText(d.username||'')||null,hash,storageRole(role),role==='team_manager'?Number(d.team_id):null,safeText(d.display_name)).run();
+      await setExtendedRole(env,result.meta.last_row_id,role);
+      await audit(env,user.id,'create','user',result.meta.last_row_id,{role,team_id:d.team_id||null});
+      return json({ok:true,id:result.meta.last_row_id},201);
+    }
   }
 
   if (path.match(/^admin\/users\/\d+$/) && method==='PUT') {
-    const denied=requireAnyRole(user,'super_admin'); if(denied)return denied;
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     const id=Number(path.split('/').pop()), d=await body(request);
-    const role=['super_admin','organizer','team_manager','referee','fan'].includes(d.role)?d.role:'fan';
+    const existing=await env.DB.prepare(`SELECT u.id,COALESCE(ar.role,u.role) role FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id WHERE u.id=?`).bind(id).first();
+    if(!existing)return json({error:'Account non trovato'},404);
+    const role=['organizer','team_manager','referee'].includes(d.role)?d.role:(ROLE_ALIASES[existing.role]||existing.role);
+    if(role==='team_manager'&&!d.team_id)return json({error:'Per un account Squadra devi selezionare una squadra'},400);
     if (id===user.id && d.is_active===0) return json({error:'Non puoi disattivare il tuo account'},400);
+    const duplicate=await env.DB.prepare('SELECT id FROM users WHERE id!=? AND (lower(email)=lower(?) OR (? IS NOT NULL AND username=?)) LIMIT 1').bind(id,d.email,d.username||null,d.username||null).first();
+    if(duplicate)return json({error:'Email o username già utilizzati'},409);
     await env.DB.prepare('UPDATE users SET display_name=?,email=?,username=?,role=?,team_id=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .bind(safeText(d.display_name),String(d.email||'').toLowerCase(),safeText(d.username||'')||null,storageRole(role),d.team_id?Number(d.team_id):null,d.is_active===0?0:1,id).run();
+      .bind(safeText(d.display_name),String(d.email||'').toLowerCase(),safeText(d.username||'')||null,storageRole(role),role==='team_manager'?Number(d.team_id):null,d.is_active===0?0:1,id).run();
     await setExtendedRole(env,id,role);
     if(d.is_active===0) await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id).run();
     await audit(env,user.id,'update','user',id,{role,is_active:d.is_active}); return json({ok:true});
   }
+
+  if (path.match(/^admin\/users\/\d+\/status$/) && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/')[2]), d=await body(request);
+    if(id===user.id && Number(d.is_active)===0)return json({error:'Non puoi disattivare il tuo account'},400);
+    const found=await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(id).first();
+    if(!found)return json({error:'Account non trovato'},404);
+    const active=Number(d.is_active)===1?1:0;
+    await env.DB.prepare('UPDATE users SET is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(active,id).run();
+    if(!active)await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id).run();
+    await audit(env,user.id,active?'activate':'deactivate','user',id);
+    return json({ok:true});
+  }
+
+  if (path.match(/^admin\/users\/\d+$/) && method==='DELETE') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+    if(id===user.id)return json({error:'Non puoi eliminare il tuo account'},400);
+    const found=await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(id).first();
+    if(!found)return json({error:'Account non trovato'},404);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
+      env.DB.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').bind(id),
+      env.DB.prepare('DELETE FROM auth_roles WHERE user_id=?').bind(id),
+      env.DB.prepare('DELETE FROM users WHERE id=?').bind(id)
+    ]);
+    await audit(env,user.id,'delete','user',id);
+    return json({ok:true});
+  }
+
   if (path.match(/^admin\/users\/\d+\/reset-link$/) && method==='POST') {
-    const denied=requireAnyRole(user,'super_admin'); if(denied)return denied;
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     const id=Number(path.split('/')[2]); const found=await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(id).first();
     if(!found)return json({error:'Account non trovato'},404);
     await env.DB.prepare("DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at <= datetime('now')").bind(id).run();
