@@ -180,6 +180,15 @@ async function home(){
 
   ${next?`<section class="countdown-section" data-kickoff="${esc(next.match_date)}"><div class="countdown-overlay"></div><div class="countdown-content"><span>${esc(next.round_name||'Prossima giornata')}</span><h2>Prossima giornata</h2><div class="countdown-grid"><div><b id="cd-days">00</b><small>Giorni</small></div><div><b id="cd-hours">00</b><small>Ore</small></div><div><b id="cd-minutes">00</b><small>Minuti</small></div><div><b id="cd-seconds">00</b><small>Secondi</small></div></div></div></section>`:''}
 
+  <section class="prime-brand-strip" aria-label="Prime League">
+    <div class="prime-brand-track">
+      ${Array.from({length:12},()=>`<div class="prime-brand-item">
+        <img src="/assets/prime-league-crest.png" alt="">
+        <strong>PRIME LEAGUE</strong>
+      </div>`).join('')}
+    </div>
+  </section>
+
   <section class="score-ribbon">
     <div class="score-ribbon-head"><strong>Partite</strong><a href="#/partite">Vedi calendario completo</a></div>
     <div class="score-scroll">${quickMatches.length?quickMatches.map((m,index)=>`<a class="mini-match ${index===0?'next-highlight':''}" href="#/partita/${m.id}">

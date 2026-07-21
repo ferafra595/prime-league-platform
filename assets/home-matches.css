@@ -113,3 +113,113 @@
     scroll-snap-align:start;
   }
 }
+
+
+/* =========================================================
+   STRISCIA BRAND TRA HERO E PROSSIMA GIORNATA
+   ========================================================= */
+.prime-brand-strip{
+  position:relative;
+  width:100vw;
+  margin-left:calc(50% - 50vw);
+  overflow:hidden;
+  background:#06152f;
+  border-top:4px solid #145dff;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  height:74px;
+  display:flex;
+  align-items:center;
+}
+
+.prime-brand-strip::before,
+.prime-brand-strip::after{
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  width:70px;
+  z-index:2;
+  pointer-events:none;
+}
+
+.prime-brand-strip::before{
+  left:0;
+  background:linear-gradient(90deg,#06152f 0%,rgba(6,21,47,0) 100%);
+}
+
+.prime-brand-strip::after{
+  right:0;
+  background:linear-gradient(270deg,#06152f 0%,rgba(6,21,47,0) 100%);
+}
+
+.prime-brand-track{
+  display:flex;
+  align-items:center;
+  width:max-content;
+  min-width:200%;
+  animation:primeBrandScroll 32s linear infinite;
+  will-change:transform;
+}
+
+.prime-brand-item{
+  display:flex;
+  align-items:center;
+  gap:13px;
+  padding:0 42px;
+  white-space:nowrap;
+  color:#fff;
+}
+
+.prime-brand-item img{
+  width:31px;
+  height:40px;
+  object-fit:contain;
+  filter:brightness(0) invert(1);
+}
+
+.prime-brand-item strong{
+  font-size:25px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:-.025em;
+}
+
+@keyframes primeBrandScroll{
+  from{transform:translateX(0)}
+  to{transform:translateX(-50%)}
+}
+
+.prime-brand-strip:hover .prime-brand-track{
+  animation-play-state:paused;
+}
+
+@media(max-width:760px){
+  .prime-brand-strip{
+    height:62px;
+    border-top-width:3px;
+  }
+
+  .prime-brand-item{
+    gap:10px;
+    padding:0 26px;
+  }
+
+  .prime-brand-item img{
+    width:25px;
+    height:32px;
+  }
+
+  .prime-brand-item strong{
+    font-size:19px;
+  }
+
+  .prime-brand-track{
+    animation-duration:24s;
+  }
+}
+
+@media(prefers-reduced-motion:reduce){
+  .prime-brand-track{
+    animation:none;
+  }
+}
