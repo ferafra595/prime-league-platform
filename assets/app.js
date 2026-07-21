@@ -1214,8 +1214,91 @@ async function manageCalendar(){
   syncViewButtons();
   renderCalendar();
 }
+
+async function refereeMatchesArea(){
+  const d=await api('team/matches');
+  const matches=d.matches||[];
+  const now=Date.now();
+
+  if(!document.querySelector('link[data-prime-team-area]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/assets/team-area.css';link.dataset.primeTeamArea='1';document.head.appendChild(link);
+  }
+
+  const statusOf=m=>m.submission_status==='pending'?'pending':m.submission_status==='rejected'?'rejected':m.submission_status==='approved'?'approved':new Date(m.match_date).getTime()>now?'upcoming':'todo';
+  const labels={upcoming:'In programma',todo:'Da refertare',pending:'In attesa',rejected:'Da correggere',approved:'Approvati'};
+
+  const card=m=>{
+    const st=statusOf(m);
+    return `<article class="team-match-card referee-match-card" data-state="${st}">
+      <div class="team-match-head"><div><span>${esc(m.round_name||'Prime League')}</span><strong>${fmtDate(m.match_date)}</strong></div><span class="team-match-state ${st}">${labels[st]}</span></div>
+      <div class="team-match-score"><div><strong>${esc(m.home_name)}</strong></div><b>${m.status==='published'?`${m.home_score??0} – ${m.away_score??0}`:'VS'}</b><div><strong>${esc(m.away_name)}</strong></div></div>
+      <div class="team-match-meta"><span>${esc(m.venue||'Campo da definire')}</span></div>
+      ${m.submission_status==='rejected'?`<div class="team-rejection"><strong>Da correggere</strong><span>${esc(m.admin_note||'Controlla il referto.')}</span></div>`:''}
+      <div class="team-match-actions">
+        ${!['pending','approved'].includes(st)?`<button class="btn primary small referee-report" data-id="${m.id}">${st==='rejected'?'Correggi referto':'Compila referto'}</button>`:''}
+        ${st==='pending'?'<span class="team-waiting">In attesa di approvazione</span>':''}
+        <a class="btn small" href="#/partita/${m.id}">Scheda partita</a>
+      </div>
+    </article>`;
+  };
+
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Area arbitro</span><h2>Partite e referti arbitrali</h2><p>Inserisci risultato, ammonizioni ed espulsioni. La compilazione resta facoltativa.</p></div></div>
+    <div id="editor"></div>
+    <section class="team-match-grid">${matches.map(card).join('')||'<div class="team-area-empty">Nessuna partita disponibile.</div>'}</section>`,'matches'),'');
+  bindLogout();
+
+  const open=async m=>{
+    const detail=await api(`referee/matches/${m.id}/report-data`);
+    const players=detail.players||[];
+    let events=[];
+    if(m.submission_events_json){try{events=JSON.parse(m.submission_events_json)||[]}catch{}}
+    const render=()=>{
+      const box=document.querySelector('#referee-events');if(!box)return;
+      box.innerHTML=events.map((e,i)=>`<div class="team-event-row referee-event-row" data-i="${i}">
+        <select class="input event-type"><option value="yellow" ${e.event_type==='yellow'?'selected':''}>Ammonizione</option><option value="red" ${e.event_type==='red'?'selected':''}>Espulsione</option><option value="goal" ${e.event_type==='goal'?'selected':''}>Gol</option><option value="assist" ${e.event_type==='assist'?'selected':''}>Assist</option></select>
+        <select class="input event-team"><option value="${m.home_team_id}" ${Number(e.team_id)===Number(m.home_team_id)?'selected':''}>${esc(m.home_name)}</option><option value="${m.away_team_id}" ${Number(e.team_id)===Number(m.away_team_id)?'selected':''}>${esc(m.away_name)}</option></select>
+        <select class="input event-player"><option value="">Seleziona giocatore</option>${players.filter(p=>Number(p.team_id)===Number(e.team_id)).map(p=>`<option value="${p.id}" ${Number(e.player_id)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select>
+        <input class="input event-quantity" type="number" min="1" value="${e.quantity||1}">
+        <button class="btn small danger remove-ref-event">Rimuovi</button>
+      </div>`).join('')||'<div class="team-area-empty compact">Nessun evento inserito.</div>';
+      box.querySelectorAll('.referee-event-row').forEach(row=>{
+        const i=Number(row.dataset.i),team=row.querySelector('.event-team');
+        row.querySelector('.event-type').onchange=e=>events[i].event_type=e.target.value;
+        team.onchange=()=>{events[i].team_id=Number(team.value);events[i].player_id='';render()};
+        row.querySelector('.event-player').onchange=e=>events[i].player_id=e.target.value;
+        row.querySelector('.event-quantity').oninput=e=>events[i].quantity=Math.max(1,Number(e.target.value||1));
+        row.querySelector('.remove-ref-event').onclick=()=>{events.splice(i,1);render()};
+      });
+    };
+
+    document.querySelector('#editor').innerHTML=`<section class="team-report-editor">
+      <div class="account-editor-head"><div><span class="eyebrow">Referto arbitro</span><h3>${esc(m.home_name)} – ${esc(m.away_name)}</h3><p>${fmtDate(m.match_date)}</p></div><button class="btn small close-referee-report">Chiudi</button></div>
+      <div class="team-report-score"><div><label>${esc(m.home_name)}</label><input class="input" id="ref-home-score" type="number" min="0" value="${m.submission_home_score??m.home_score??0}"></div><b>–</b><div><label>${esc(m.away_name)}</label><input class="input" id="ref-away-score" type="number" min="0" value="${m.submission_away_score??m.away_score??0}"></div></div>
+      <div class="review-info-banner"><strong>Compilazione facoltativa.</strong><span>Puoi inserire soltanto cartellini ed espulsioni oppure completare anche risultato, gol e assist.</span></div>
+      <div class="team-event-heading"><div><h4>Eventi arbitrali</h4><p>Seleziona sempre la squadra e il giocatore corretto.</p></div><div><button class="btn small add-ref-event" data-type="yellow">+ Giallo</button><button class="btn small add-ref-event" data-type="red">+ Rosso</button><button class="btn small add-ref-event" data-type="goal">+ Gol</button><button class="btn small add-ref-event" data-type="assist">+ Assist</button></div></div>
+      <div id="referee-events"></div>
+      <div class="field"><label>Note arbitrali</label><textarea class="input" id="referee-notes" rows="4"></textarea></div>
+      <div class="team-report-submit"><span>L’Admin controllerà il referto prima della pubblicazione.</span><button class="btn primary send-referee-report">Invia all’Admin</button></div>
+    </section>`;
+    render();
+    document.querySelector('#editor').scrollIntoView({behavior:'smooth'});
+    document.querySelector('.close-referee-report').onclick=()=>document.querySelector('#editor').innerHTML='';
+    document.querySelectorAll('.add-ref-event').forEach(b=>b.onclick=()=>{events.push({team_id:Number(m.home_team_id),player_id:'',event_type:b.dataset.type,quantity:1});render()});
+    document.querySelector('.send-referee-report').onclick=async()=>{
+      const clean=events.filter(e=>e.player_id).map(e=>({...e,team_id:Number(e.team_id),player_id:Number(e.player_id),quantity:Number(e.quantity||1)}));
+      await api('team/submissions',{method:'POST',body:JSON.stringify({match_id:m.id,home_score:Number(document.querySelector('#ref-home-score').value||0),away_score:Number(document.querySelector('#ref-away-score').value||0),events:clean,notes:document.querySelector('#referee-notes').value||''})});
+      alert('Referto arbitrale inviato.');refereeMatchesArea();
+    };
+  };
+  document.querySelectorAll('.referee-report').forEach(b=>b.onclick=()=>{
+    const m=matches.find(x=>Number(x.id)===Number(b.dataset.id));
+    if(new Date(m.match_date).getTime()>Date.now()&&!confirm('La partita risulta ancora in programma. Vuoi compilare il referto per effettuare un test?'))return;
+    open(m);
+  });
+}
 async function manageMatches(){
   if(state.user.role==='team_manager')return teamMatchesArea();
+  if(state.user.role==='referee')return refereeMatchesArea();
   await loadTeams();
   const isAdmin=['super_admin','organizer'].includes(state.user.role);
   const endpoint=isAdmin?'admin/matches':'team/matches';
@@ -1456,8 +1539,9 @@ async function manageMatches(){
   document.querySelectorAll('.delete-match').forEach(btn=>btn.onclick=async()=>{if(confirm('Eliminare definitivamente questa partita, gli eventi e il referto collegato?')){await api(`admin/matches/${btn.dataset.id}`,{method:'DELETE'});manageMatches()}});
 }
 async function submissions(){
-  const d=await api('admin/reports');
+  const [d,playersData]=await Promise.all([api('admin/reports'),api('admin/players')]);
   const reports=[...(d.reports||[])];
+  const reportPlayers=playersData.players||[];
   const seasons=d.seasons||[];
   const now=Date.now();
 
@@ -1529,7 +1613,7 @@ async function submissions(){
       </div>`:''}
       <div class="report-card-actions">
         <button class="btn primary small open-report" data-id="${r.id}">${r.status==='published'?'Modifica referto':'Compila referto'}</button>
-        ${Number(r.pending_submissions)>0?`<button class="btn small approve-submission" data-id="${r.pending_submission_id}">Approva invio</button><button class="btn small danger reject-submission" data-id="${r.pending_submission_id}">Rifiuta</button>`:''}
+        ${Number(r.pending_submissions)>0?`<button class="btn small primary review-submissions" data-match="${r.id}">Vedi referto completo</button>`:''}
         <a class="btn small" href="#/partita/${r.id}">Scheda pubblica</a>
       </div>
     </article>`;
@@ -1594,16 +1678,72 @@ async function submissions(){
     state.pendingReportMatchId=Number(btn.dataset.id);
     manageMatches();
   });
-  document.querySelectorAll('.approve-submission').forEach(btn=>btn.onclick=async()=>{
-    if(confirm('Approvare questo referto? Risultato, eventi e MVP diventeranno ufficiali e la partita sarà pubblicata automaticamente.')){
-      await api(`admin/submissions/${btn.dataset.id}/approve`,{method:'POST',body:'{}'});
-      submissions();
-    }
-  });
-  document.querySelectorAll('.reject-submission').forEach(btn=>btn.onclick=async()=>{
-    const note=prompt('Motivo del rifiuto (facoltativo):')||'';
-    await api(`admin/submissions/${btn.dataset.id}/reject`,{method:'POST',body:JSON.stringify({admin_note:note})});
-    submissions();
+  const eventLabel={goal:'Gol',assist:'Assist',yellow:'Ammonizione',red:'Espulsione'};
+  const playerName=id=>{
+    const p=reportPlayers.find(x=>Number(x.id)===Number(id));
+    return p?`${p.first_name} ${p.last_name}${p.shirt_number?` · #${p.shirt_number}`:''}`:'Giocatore non disponibile';
+  };
+  const parseNotes=value=>{
+    try{
+      const parsed=JSON.parse(value||'{}');
+      return typeof parsed==='object'&&parsed!==null?{text:parsed.text||'',mvp_player_id:parsed.mvp_player_id||null}:{text:String(value||''),mvp_player_id:null};
+    }catch{return {text:value||'',mvp_player_id:null}}
+  };
+
+  document.querySelectorAll('.review-submissions').forEach(btn=>btn.onclick=async()=>{
+    const detail=await api(`admin/reports/${btn.dataset.match}/submissions`);
+    const items=detail.submissions||[];
+    const match=detail.match||{};
+    document.querySelector('#reports-review-modal')?.remove();
+    const modal=document.createElement('div');
+    modal.id='reports-review-modal';
+    modal.className='report-review-overlay';
+
+    const submissionCard=s=>{
+      let events=[];try{events=JSON.parse(s.events_json||'[]')||[]}catch{}
+      const notes=parseNotes(s.notes);
+      const grouped={goal:[],assist:[],yellow:[],red:[]};
+      events.forEach(e=>{if(grouped[e.event_type])grouped[e.event_type].push(e)});
+      const eventSections=Object.entries(grouped).filter(([,arr])=>arr.length).map(([type,arr])=>`<div class="review-event-group">
+        <strong>${eventLabel[type]}</strong>
+        ${arr.map(e=>`<span>${esc(playerName(e.player_id))}${Number(e.quantity||1)>1?` × ${Number(e.quantity)}`:''}</span>`).join('')}
+      </div>`).join('')||'<div class="review-no-events">Nessun evento inserito.</div>';
+      return `<article class="review-submission-card ${esc(s.status)}">
+        <div class="review-submission-head">
+          <div><span>${s.source_role==='referee'?'Referto arbitro':'Referto squadra'}</span><h4>${esc(s.team_name||s.submitted_by||'Invio')}</h4><small>Inviato da ${esc(s.submitted_by||'utente')} · ${fmtDate(s.created_at)}</small></div>
+          <span class="review-status ${esc(s.status)}">${s.status==='pending'?'In attesa':s.status==='approved'?'Approvato':s.status==='rejected'?'Rifiutato':'Superato'}</span>
+        </div>
+        <div class="review-proposed-score"><span>${esc(match.home_name||'Casa')}</span><b>${s.home_score} – ${s.away_score}</b><span>${esc(match.away_name||'Ospite')}</span></div>
+        <div class="review-events-grid">${eventSections}</div>
+        ${notes.mvp_player_id?`<div class="review-mvp"><strong>MVP proposto</strong><span>${esc(playerName(notes.mvp_player_id))}</span></div>`:''}
+        ${notes.text?`<div class="review-notes"><strong>Note</strong><p>${esc(notes.text)}</p></div>`:''}
+        ${s.admin_note?`<div class="review-admin-note"><strong>Nota Admin</strong><p>${esc(s.admin_note)}</p></div>`:''}
+        ${s.status==='pending'?`<div class="review-actions">
+          <button class="btn primary approve-review" data-id="${s.id}">Approva questo referto</button>
+          <button class="btn danger reject-review" data-id="${s.id}">Rifiuta</button>
+        </div>`:''}
+      </article>`;
+    };
+
+    modal.innerHTML=`<div class="report-review-dialog">
+      <div class="report-review-head"><div><span class="eyebrow">Revisione completa</span><h2>${esc(match.home_name||'')} – ${esc(match.away_name||'')}</h2><p>${esc(match.round_name||'')} · ${fmtDate(match.match_date)}</p></div><button class="btn small close-review">Chiudi</button></div>
+      <div class="review-info-banner"><strong>Il referto non è obbligatorio.</strong><span>Puoi confrontare gli invii delle due squadre e dell’arbitro. Approva soltanto quelli che vuoi rendere ufficiali.</span></div>
+      <div class="review-submissions-list">${items.map(submissionCard).join('')||'<div class="reports-empty">Nessun referto ricevuto.</div>'}</div>
+    </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('.close-review').onclick=()=>modal.remove();
+    modal.onclick=e=>{if(e.target===modal)modal.remove()};
+    modal.querySelectorAll('.approve-review').forEach(b=>b.onclick=async()=>{
+      if(confirm('Approvare questo referto? I dati verranno uniti agli altri referti già approvati e la partita sarà aggiornata automaticamente.')){
+        await api(`admin/submissions/${b.dataset.id}/approve`,{method:'POST',body:'{}'});
+        modal.remove();submissions();
+      }
+    });
+    modal.querySelectorAll('.reject-review').forEach(b=>b.onclick=async()=>{
+      const note=prompt('Scrivi il motivo del rifiuto:')||'';
+      await api(`admin/submissions/${b.dataset.id}/reject`,{method:'POST',body:JSON.stringify({admin_note:note})});
+      modal.remove();submissions();
+    });
   });
 
   apply();
