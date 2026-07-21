@@ -118,6 +118,16 @@ async function ensureAuthSchema(env) {
       entity_id TEXT,
       details TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_profile_details (
+      team_id INTEGER PRIMARY KEY,
+      city TEXT,
+      home_venue TEXT,
+      phone TEXT,
+      public_email TEXT,
+      instagram_url TEXT,
+      facebook_url TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`)
   ]);
 
@@ -658,12 +668,26 @@ async function route(request, env, path) {
       const recentMatches = (await env.DB.prepare(`SELECT m.id,m.round_name,m.match_date,m.status,m.home_score,m.away_score,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC LIMIT 5`).all()).results;
       return json({user:publicUser(user),counts,currentSeason,recentMatches});
     }
-    const team = await env.DB.prepare('SELECT * FROM teams WHERE id=?').bind(user.team_id).first();
-    const counts = {
+    const team = user.team_id ? await env.DB.prepare('SELECT * FROM teams WHERE id=?').bind(user.team_id).first() : null;
+    const counts = user.team_id ? {
       players:(await env.DB.prepare('SELECT COUNT(*) c FROM players WHERE team_id=? AND is_active=1').bind(user.team_id).first()).c,
       sponsors:(await env.DB.prepare("SELECT COUNT(*) c FROM sponsors WHERE team_id=? AND level='team' AND is_active=1").bind(user.team_id).first()).c,
       pending:(await env.DB.prepare("SELECT COUNT(*) c FROM match_submissions WHERE team_id=? AND status='pending'").bind(user.team_id).first()).c
-    };
+    } : {players:0,sponsors:0,pending:0};
+    if(hasRole(user,'team_manager')&&user.team_id){
+      const nextMatch=await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE (m.home_team_id=? OR m.away_team_id=?) AND datetime(m.match_date)>=datetime('now') AND m.status!='published'
+        ORDER BY datetime(m.match_date) LIMIT 1`).bind(user.team_id,user.team_id).first();
+      const lastMatch=await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE (m.home_team_id=? OR m.away_team_id=?) AND m.status='published'
+        ORDER BY datetime(m.match_date) DESC LIMIT 1`).bind(user.team_id,user.team_id).first();
+      const reportTodo=(await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
+        WHERE (m.home_team_id=? OR m.away_team_id=?) AND datetime(m.match_date)<=datetime('now') AND m.status!='published'
+        AND NOT EXISTS(SELECT 1 FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? AND s.status='pending')`).bind(user.team_id,user.team_id,user.team_id).first()).c;
+      return json({user:publicUser(user),team,counts,nextMatch,lastMatch,reportTodo});
+    }
     return json({user:publicUser(user),team,counts});
   }
 
@@ -688,6 +712,26 @@ async function route(request, env, path) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/')[2]);
     await env.DB.prepare('UPDATE seasons SET is_current=0').run(); await env.DB.prepare('UPDATE seasons SET is_current=1 WHERE id=?').bind(id).run();
     await audit(env,user.id,'set_current','season',id,{}); return json({ok:true});
+  }
+
+  if (path === 'team/profile') {
+    const denied=requireAnyRole(user,'team_manager'); if(denied)return denied;
+    if(!user.team_id)return json({error:'Account non collegato a una squadra'},400);
+    if(method==='GET'){
+      const team=await env.DB.prepare('SELECT * FROM teams WHERE id=?').bind(user.team_id).first();
+      const details=await env.DB.prepare('SELECT * FROM team_profile_details WHERE team_id=?').bind(user.team_id).first();
+      return json({team,details:details||{}});
+    }
+    if(method==='PUT'){
+      const d=await body(request);
+      await env.DB.prepare(`UPDATE teams SET short_name=?,logo_url=?,primary_color=?,secondary_color=?,manager_name=?,coach_name=?,description=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(safeText(d.short_name||''),safeText(d.logo_url||''),d.primary_color||'#07172f',d.secondary_color||'#ffffff',safeText(d.manager_name||''),safeText(d.coach_name||''),safeText(d.description||''),user.team_id).run();
+      await env.DB.prepare(`INSERT INTO team_profile_details(team_id,city,home_venue,phone,public_email,instagram_url,facebook_url,updated_at)
+        VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(team_id) DO UPDATE SET city=excluded.city,home_venue=excluded.home_venue,phone=excluded.phone,public_email=excluded.public_email,instagram_url=excluded.instagram_url,facebook_url=excluded.facebook_url,updated_at=CURRENT_TIMESTAMP`)
+        .bind(user.team_id,safeText(d.city||''),safeText(d.home_venue||''),safeText(d.phone||''),safeText(d.public_email||''),safeText(d.instagram_url||''),safeText(d.facebook_url||'')).run();
+      await audit(env,user.id,'update','team_profile',user.team_id,d);return json({ok:true});
+    }
   }
 
   // Generic admin list endpoints
@@ -816,8 +860,17 @@ async function route(request, env, path) {
   if (path === 'team/matches') {
     const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied;
     const q=hasRole(user,'referee')
-      ? env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`)
-      : env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.home_team_id=? OR m.away_team_id=? ORDER BY m.match_date DESC`).bind(user.team_id,user.team_id);
+      ? env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`)
+      : env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
+        (SELECT s.status FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_status,
+        (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
+        (SELECT s.away_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_away_score,
+        (SELECT s.events_json FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_events_json,
+        (SELECT s.notes FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_notes,
+        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE m.home_team_id=? OR m.away_team_id=? ORDER BY m.match_date DESC`)
+        .bind(user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id);
     const rows=await q.all(); return json({matches:rows.results});
   }
   if (path === 'team/submissions' && method==='POST') {
@@ -827,7 +880,10 @@ async function route(request, env, path) {
       : await env.DB.prepare('SELECT * FROM matches WHERE id=? AND (home_team_id=? OR away_team_id=?)').bind(Number(d.match_id),user.team_id,user.team_id).first();
     if(!match)return json({error:'Partita non valida'},400);
     const submissionTeamId=hasRole(user,'referee')?match.home_team_id:user.team_id;
-    const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),d.notes||'').run(); await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true},201);
+    if(hasRole(user,'team_manager'))await env.DB.prepare("UPDATE match_submissions SET status='superseded' WHERE match_id=? AND team_id=? AND status IN ('pending','rejected')").bind(match.id,submissionTeamId).run();
+    const notesPayload=JSON.stringify({text:d.notes||'',mvp_player_id:d.mvp_player_id?Number(d.mvp_player_id):null});
+    const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),notesPayload).run();
+    await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201);
   }
 
 
@@ -1027,6 +1083,23 @@ async function route(request, env, path) {
     if(method==='GET') { const q=hasRole(user,'team_manager')?env.DB.prepare("SELECT * FROM sponsors WHERE team_id=? AND level='team' ORDER BY is_featured DESC,name").bind(user.team_id):env.DB.prepare('SELECT s.*,t.name team_name FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id ORDER BY s.level,s.is_featured DESC,s.name'); return json({sponsors:(await q.all()).results}); }
     if(method==='POST') { const d=await body(request); const level=hasRole(user,'team_manager')?'team':(d.level||'league'); const teamId=hasRole(user,'team_manager')?user.team_id:(level==='team'?Number(d.team_id):null); const result=await env.DB.prepare('INSERT INTO sponsors(name,logo_url,website_url,level,team_id,is_featured) VALUES(?,?,?,?,?,?)').bind(d.name,d.logo_url||'',d.website_url||'',level,teamId,d.is_featured?1:0).run(); await audit(env,user.id,'create','sponsor',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
+  if (path.match(/^team\/sponsors\/\d+$/)) {
+    const denied=requireAnyRole(user,'team_manager'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+    const existing=await env.DB.prepare("SELECT * FROM sponsors WHERE id=? AND team_id=? AND level='team'").bind(id,user.team_id).first();
+    if(!existing)return json({error:'Sponsor non trovato'},404);
+    if(method==='PUT'){
+      const d=await body(request);
+      await env.DB.prepare("UPDATE sponsors SET name=?,logo_url=?,website_url=?,is_featured=?,is_active=? WHERE id=? AND team_id=?")
+        .bind(safeText(d.name),d.logo_url||'',d.website_url||'',d.is_featured?1:0,d.is_active===0?0:1,id,user.team_id).run();
+      await audit(env,user.id,'update','sponsor',id,d);return json({ok:true});
+    }
+    if(method==='DELETE'){
+      await env.DB.prepare("DELETE FROM sponsors WHERE id=? AND team_id=?").bind(id,user.team_id).run();
+      await audit(env,user.id,'delete','sponsor',id,{});return json({ok:true});
+    }
+  }
+
   if (path === 'admin/news') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     if(method==='GET') return json({news:(await env.DB.prepare('SELECT * FROM news ORDER BY created_at DESC').all()).results});
