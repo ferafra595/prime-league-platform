@@ -8,6 +8,23 @@ const safeText = (value) => typeof value === 'string' ? value.trim() : value;
 
 
 
+
+const MEDIA_TYPES = new Set(['image/jpeg','image/png','image/webp']);
+const MEDIA_CATEGORIES = new Set(['players','teams','sponsors','news','other']);
+
+function mediaKeyFromUrl(value='') {
+  const prefix='/api/media/';
+  const text=String(value||'');
+  const index=text.indexOf(prefix);
+  if(index<0)return null;
+  return decodeURIComponent(text.slice(index+prefix.length)).replace(/^\/+/,'');
+}
+function safeMediaName(value='image') {
+  return String(value||'image').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80)||'image';
+}
+
 async function ensureCalendarSchema(env) {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS match_schedule_meta (
@@ -224,6 +241,74 @@ async function publicDashboard(env) {
 async function route(request, env, path) {
   const method = request.method;
   const user = await currentUser(request, env);
+
+
+  if (path.startsWith('media/') && method==='GET') {
+    if(!env.MEDIA) return json({error:'Archivio media non configurato'},503);
+    const key=decodeURIComponent(path.slice('media/'.length));
+    if(!key || key.includes('..')) return json({error:'File non valido'},400);
+    const object=await env.MEDIA.get(key);
+    if(!object) return new Response('File non trovato',{status:404});
+    const headers=new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('etag',object.httpEtag);
+    headers.set('cache-control','public, max-age=31536000, immutable');
+    headers.set('x-content-type-options','nosniff');
+    return new Response(object.body,{headers});
+  }
+
+  if (path === 'admin/media/upload' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    if(!env.MEDIA) return json({error:'Binding R2 MEDIA non disponibile'},503);
+    let form;
+    try { form=await request.formData(); } catch { return json({error:'Caricamento non valido'},400); }
+    const file=form.get('file');
+    const category=String(form.get('category')||'other');
+    const oldUrl=String(form.get('old_url')||'');
+    if(!(file instanceof File)) return json({error:'Seleziona un file'},400);
+    if(!MEDIA_CATEGORIES.has(category)) return json({error:'Categoria non valida'},400);
+    if(!MEDIA_TYPES.has(file.type)) return json({error:'Sono ammessi solo PNG, JPG e WEBP'},400);
+    if(file.size<=0 || file.size>5*1024*1024) return json({error:'Il file deve pesare al massimo 5 MB'},400);
+
+    const ext=file.type==='image/png'?'png':file.type==='image/webp'?'webp':'jpg';
+    const base=safeMediaName(file.name.replace(/\.[^.]+$/,''));
+    const key=`${category}/${Date.now()}-${crypto.randomUUID().slice(0,8)}-${base}.${ext}`;
+    await env.MEDIA.put(key,file.stream(),{
+      httpMetadata:{contentType:file.type,cacheControl:'public, max-age=31536000, immutable'},
+      customMetadata:{uploadedBy:String(user.id),originalName:file.name}
+    });
+
+    const oldKey=mediaKeyFromUrl(oldUrl);
+    if(oldKey && oldKey!==key) {
+      try { await env.MEDIA.delete(oldKey); } catch {}
+    }
+    await audit(env,user.id,'upload','media',key,{category,size:file.size,type:file.type});
+    return json({ok:true,key,url:`/api/media/${encodeURIComponent(key).replaceAll('%2F','/')}`,size:file.size,type:file.type},201);
+  }
+
+  if (path === 'admin/media' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    if(!env.MEDIA) return json({error:'Binding R2 MEDIA non disponibile'},503);
+    const category=new URL(request.url).searchParams.get('category')||'';
+    const prefix=MEDIA_CATEGORIES.has(category)?`${category}/`:undefined;
+    const listed=await env.MEDIA.list({prefix,limit:500});
+    return json({objects:listed.objects.map(o=>({
+      key:o.key,url:`/api/media/${encodeURIComponent(o.key).replaceAll('%2F','/')}`,
+      size:o.size,uploaded:o.uploaded,etag:o.etag,
+      category:o.key.split('/')[0]||'other'
+    }))});
+  }
+
+  if (path === 'admin/media/delete' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    if(!env.MEDIA) return json({error:'Binding R2 MEDIA non disponibile'},503);
+    const d=await body(request);
+    const key=String(d.key||mediaKeyFromUrl(d.url)||'');
+    if(!key || key.includes('..')) return json({error:'File non valido'},400);
+    await env.MEDIA.delete(key);
+    await audit(env,user.id,'delete','media',key,{});
+    return json({ok:true});
+  }
 
   if (path === 'health') return json({ ok:true, database:true, time:new Date().toISOString() });
   if (path === 'me') return json({ user: publicUser(user) });
@@ -619,7 +704,7 @@ async function route(request, env, path) {
   if (path === 'admin/players' || path === 'team/players') {
     const denied=requireAnyRole(user,'super_admin','organizer','team_manager'); if(denied)return denied;
     const teamFilter=hasRole(user,'team_manager')?user.team_id:null;
-    if(method==='GET') { const q=teamFilter?env.DB.prepare('SELECT p.*,t.name team_name FROM players p JOIN teams t ON t.id=p.team_id WHERE p.team_id=? ORDER BY p.last_name').bind(teamFilter):env.DB.prepare('SELECT p.*,t.name team_name FROM players p JOIN teams t ON t.id=p.team_id ORDER BY t.name,p.last_name'); return json({players:(await q.all()).results}); }
+    if(method==='GET') { const q=teamFilter?env.DB.prepare('SELECT p.*,t.name team_name,t.logo_url team_logo FROM players p JOIN teams t ON t.id=p.team_id WHERE p.team_id=? ORDER BY p.last_name').bind(teamFilter):env.DB.prepare('SELECT p.*,t.name team_name,t.logo_url team_logo FROM players p JOIN teams t ON t.id=p.team_id ORDER BY t.name,p.last_name'); return json({players:(await q.all()).results}); }
     if(method==='POST') { const d=await body(request); const teamId=teamFilter||Number(d.team_id); if(!teamId||!d.first_name||!d.last_name||!d.role)return json({error:'Dati obbligatori mancanti'},400); const result=await env.DB.prepare('INSERT INTO players(team_id,first_name,last_name,slug,shirt_number,role,photo_url) VALUES(?,?,?,?,?,?,?)').bind(teamId,safeText(d.first_name),safeText(d.last_name),slugify(d.slug||`${d.first_name}-${d.last_name}-${crypto.randomUUID().slice(0,5)}`),d.shirt_number?Number(d.shirt_number):null,d.role,d.photo_url||'').run(); await audit(env,user.id,'create','player',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path.match(/^(admin|team)\/players\/\d+$/)) {
@@ -716,7 +801,7 @@ async function route(request, env, path) {
 
   if (path === 'admin/matches') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    if(method==='GET') return json({matches:(await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,COALESCE(msm.phase,'regular') phase,COALESCE(msm.schedule_status,CASE WHEN m.status='published' THEN 'completed' WHEN m.status='postponed' THEN 'postponed' ELSE 'scheduled' END) schedule_status,COALESCE(msm.manually_modified,0) manually_modified,msm.notes schedule_notes FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id ORDER BY m.match_date ASC,m.id ASC`).all()).results,seasons:(await env.DB.prepare('SELECT * FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC').all()).results});
+    if(method==='GET') return json({matches:(await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name,COALESCE(msm.phase,'regular') phase,COALESCE(msm.schedule_status,CASE WHEN m.status='published' THEN 'completed' WHEN m.status='postponed' THEN 'postponed' ELSE 'scheduled' END) schedule_status,COALESCE(msm.manually_modified,0) manually_modified,msm.notes schedule_notes FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id ORDER BY m.match_date DESC`).all()).results,seasons:(await env.DB.prepare('SELECT * FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC').all()).results});
     if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO matches(season_id,round_name,home_team_id,away_team_id,match_date,venue,status) VALUES(?,?,?,?,?,?,?)').bind(Number(d.season_id||1),d.round_name||'',Number(d.home_team_id),Number(d.away_team_id),d.match_date,d.venue||'',d.status||'scheduled').run(); await audit(env,user.id,'create','match',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path.match(/^admin\/matches\/\d+$/) && method==='PUT') {
