@@ -614,7 +614,7 @@ async function route(request, env, path) {
   if (path.match(/^admin\/teams\/\d+$/)) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
     if(method==='PUT') { await env.DB.prepare('UPDATE teams SET name=?,slug=?,short_name=?,logo_url=?,primary_color=?,secondary_color=?,manager_name=?,coach_name=?,description=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(d.name,slugify(d.slug||d.name),d.short_name||'',d.logo_url||'',d.primary_color||'#7c3cff',d.secondary_color||'#ffffff',d.manager_name||'',d.coach_name||'',d.description||'',d.is_active===0?0:1,id).run(); await audit(env,user.id,'update','team',id,d); return json({ok:true}); }
-    if(method==='DELETE') { await env.DB.prepare('UPDATE teams SET is_active=0 WHERE id=?').bind(id).run(); await audit(env,user.id,'disable','team',id); return json({ok:true}); }
+    if(method==='DELETE') { await env.DB.prepare('DELETE FROM match_submissions WHERE match_id IN (SELECT id FROM matches WHERE home_team_id=? OR away_team_id=?)').bind(id,id).run(); await env.DB.prepare('DELETE FROM match_events WHERE match_id IN (SELECT id FROM matches WHERE home_team_id=? OR away_team_id=?)').bind(id,id).run(); await env.DB.prepare('DELETE FROM match_schedule_meta WHERE match_id IN (SELECT id FROM matches WHERE home_team_id=? OR away_team_id=?)').bind(id,id).run(); await env.DB.prepare('DELETE FROM matches WHERE home_team_id=? OR away_team_id=?').bind(id,id).run(); await env.DB.prepare('UPDATE users SET team_id=NULL WHERE team_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM sponsors WHERE team_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM players WHERE team_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM teams WHERE id=?').bind(id).run(); await audit(env,user.id,'delete','team',id); return json({ok:true}); }
   }
   if (path === 'admin/players' || path === 'team/players') {
     const denied=requireAnyRole(user,'super_admin','organizer','team_manager'); if(denied)return denied;
@@ -625,7 +625,7 @@ async function route(request, env, path) {
   if (path.match(/^(admin|team)\/players\/\d+$/)) {
     const denied=requireAnyRole(user,'super_admin','organizer','team_manager'); if(denied)return denied; const id=Number(path.split('/').pop()); const existing=await env.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first(); if(!existing)return json({error:'Non trovato'},404); if(hasRole(user,'team_manager')&&existing.team_id!==user.team_id)return json({error:'Permessi insufficienti'},403); const d=await body(request);
     if(method==='PUT') { const teamId=hasRole(user,'team_manager')?user.team_id:Number(d.team_id||existing.team_id); await env.DB.prepare('UPDATE players SET team_id=?,first_name=?,last_name=?,slug=?,shirt_number=?,role=?,photo_url=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(teamId,d.first_name,d.last_name,slugify(d.slug||`${d.first_name}-${d.last_name}-${id}`),d.shirt_number?Number(d.shirt_number):null,d.role,d.photo_url||'',d.is_active===0?0:1,id).run(); await audit(env,user.id,'update','player',id,d); return json({ok:true}); }
-    if(method==='DELETE') { await env.DB.prepare('UPDATE players SET is_active=0 WHERE id=?').bind(id).run(); await audit(env,user.id,'disable','player',id); return json({ok:true}); }
+    if(method==='DELETE') { await env.DB.prepare('UPDATE matches SET mvp_player_id=NULL WHERE mvp_player_id=?').bind(id).run(); await env.DB.prepare('UPDATE match_events SET player_id=NULL WHERE player_id=?').bind(id).run(); await env.DB.prepare('UPDATE match_events SET assist_player_id=NULL WHERE assist_player_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM players WHERE id=?').bind(id).run(); await audit(env,user.id,'delete','player',id); return json({ok:true}); }
   }
 
   if (path === 'admin/calendar/generate' && method==='POST') {
@@ -770,6 +770,35 @@ async function route(request, env, path) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     if(method==='GET') { const polls=(await env.DB.prepare('SELECT * FROM polls ORDER BY created_at DESC').all()).results; for(const p of polls)p.options=(await env.DB.prepare('SELECT * FROM poll_options WHERE poll_id=?').bind(p.id).all()).results; return json({polls}); }
     if(method==='POST') { const d=await body(request); const r=await env.DB.prepare('INSERT INTO polls(title,description,poll_type,starts_at,ends_at,status) VALUES(?,?,?,?,?,?)').bind(d.title,d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft').run(); for(const o of (d.options||[])) if(o.label) await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(r.meta.last_row_id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run(); await audit(env,user.id,'create','poll',r.meta.last_row_id,d); return json({ok:true,id:r.meta.last_row_id},201); }
+  }
+
+  // Full Admin CRUD: every platform entity can be created, edited and deleted only by Admin/Organizer.
+  if (path.match(/^admin\/seasons\/\d+$/) && method==='DELETE') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop());
+    await env.DB.prepare('DELETE FROM match_submissions WHERE match_id IN (SELECT id FROM matches WHERE season_id=?)').bind(id).run();
+    await env.DB.prepare('DELETE FROM match_events WHERE match_id IN (SELECT id FROM matches WHERE season_id=?)').bind(id).run();
+    await env.DB.prepare('DELETE FROM match_schedule_meta WHERE match_id IN (SELECT id FROM matches WHERE season_id=?)').bind(id).run();
+    await env.DB.prepare('DELETE FROM matches WHERE season_id=?').bind(id).run();
+    await env.DB.prepare('DELETE FROM seasons WHERE id=?').bind(id).run(); await audit(env,user.id,'delete','season',id,{}); return json({ok:true});
+  }
+  if (path.match(/^admin\/matches\/\d+$/) && method==='DELETE') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop());
+    await env.DB.prepare('DELETE FROM match_submissions WHERE match_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM match_schedule_meta WHERE match_id=?').bind(id).run(); await env.DB.prepare('DELETE FROM matches WHERE id=?').bind(id).run(); await audit(env,user.id,'delete','match',id,{}); return json({ok:true});
+  }
+  if (path.match(/^admin\/sponsors\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
+    if(method==='PUT'){const level=d.level==='team'?'team':'league';await env.DB.prepare('UPDATE sponsors SET name=?,logo_url=?,website_url=?,level=?,team_id=?,is_featured=?,is_active=? WHERE id=?').bind(safeText(d.name),d.logo_url||'',d.website_url||'',level,level==='team'&&d.team_id?Number(d.team_id):null,d.is_featured?1:0,d.is_active===0?0:1,id).run();await audit(env,user.id,'update','sponsor',id,d);return json({ok:true});}
+    if(method==='DELETE'){await env.DB.prepare('DELETE FROM sponsors WHERE id=?').bind(id).run();await audit(env,user.id,'delete','sponsor',id,{});return json({ok:true});}
+  }
+  if (path.match(/^admin\/news\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
+    if(method==='PUT'){await env.DB.prepare(`UPDATE news SET title=?,slug=?,excerpt=?,body=?,cover_url=?,is_published=?,published_at=CASE WHEN ?=1 THEN COALESCE(published_at,CURRENT_TIMESTAMP) ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(safeText(d.title),slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',d.is_published?1:0,d.is_published?1:0,id).run();await audit(env,user.id,'update','news',id,d);return json({ok:true});}
+    if(method==='DELETE'){await env.DB.prepare('DELETE FROM news WHERE id=?').bind(id).run();await audit(env,user.id,'delete','news',id,{});return json({ok:true});}
+  }
+  if (path.match(/^admin\/polls\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
+    if(method==='PUT'){await env.DB.prepare('UPDATE polls SET title=?,description=?,poll_type=?,starts_at=?,ends_at=?,status=? WHERE id=?').bind(safeText(d.title),d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft',id).run();await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();for(const o of (d.options||[]))if(o.label)await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();await audit(env,user.id,'update','poll',id,d);return json({ok:true});}
+    if(method==='DELETE'){await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM polls WHERE id=?').bind(id).run();await audit(env,user.id,'delete','poll',id,{});return json({ok:true});}
   }
 
   return json({ error:'Endpoint non trovato', path },404);
