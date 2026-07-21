@@ -383,7 +383,108 @@ function dashLayout(body,section='overview'){
 function bindLogout(){const b=document.querySelector('#logout');if(b)b.onclick=async()=>{await api('auth/logout',{method:'POST'});state.user=null;location.hash='#/home'}}
 async function dashboard(section='overview'){
   if(!state.user){location.hash='#/login';return} loading();
-  if(section==='overview'){const d=await api('dashboard');const labels=['super_admin','organizer'].includes(state.user.role)?{teams:'Squadre',players:'Giocatori',matches:'Partite',users:'Account',sponsors:'Sponsor',pending:'Referti in attesa'}:{players:'Giocatori',sponsors:'Sponsor',pending:'Invii in attesa'};const icons={teams:'◫',players:'◎',matches:'⚽',users:'◉',sponsors:'◆',pending:'!'};set(dashLayout(`<section class="admin-welcome"><div><span class="eyebrow light">Centro di controllo</span><h1>Ciao, ${esc(state.user.display_name)}</h1><p>Gestisci la Prime League da un unico pannello.</p></div><div class="admin-season-status"><small>Stagione attuale</small><strong>${esc(d.currentSeason?.name||'Non impostata')}</strong><a href="#/dashboard/seasons">Gestisci stagione →</a></div></section><div class="admin-kpi-grid">${Object.entries(d.counts).map(([k,v])=>`<a class="admin-kpi-card ${k==='pending'&&v?'attention':''}" href="#/dashboard/${k==='pending'?'submissions':k}"><span>${icons[k]||'•'}</span><div><small>${labels[k]||k}</small><strong>${v}</strong></div></a>`).join('')}</div><section class="admin-quick-grid"><article class="admin-panel"><div class="admin-panel-head"><div><span class="eyebrow">Operazioni rapide</span><h3>Cosa vuoi fare?</h3></div></div><div class="admin-quick-actions"><a href="#/dashboard/matches">＋ Crea una partita</a><a href="#/dashboard/players">＋ Inserisci un giocatore</a><a href="#/dashboard/teams">＋ Registra una squadra</a><a href="#/dashboard/submissions">✓ Verifica i referti</a></div></article><article class="admin-panel"><div class="admin-panel-head"><div><span class="eyebrow">Ultime gare</span><h3>Attività recente</h3></div><a href="#/dashboard/matches">Tutte →</a></div><div class="admin-recent-list">${(d.recentMatches||[]).map(m=>`<a href="#/partita/${m.id}"><div><small>${esc(m.round_name||'Prime League')}</small><strong>${esc(m.home_name)} ${m.status==='published'?`<b>${m.home_score}-${m.away_score}</b>`:'vs'} ${esc(m.away_name)}</strong></div><span>${fmtDate(m.match_date)}</span></a>`).join('')||'<p class="muted">Nessuna partita registrata.</p>'}</div></article></section>`,section),'');bindLogout();return}
+
+  if(section==='overview'){
+    const d=await api('admin/dashboard');
+
+    if(!document.querySelector('link[data-prime-dashboard]')){
+      const link=document.createElement('link');
+      link.rel='stylesheet';
+      link.href='/assets/dashboard-admin.css';
+      link.dataset.primeDashboard='1';
+      document.head.appendChild(link);
+    }
+
+    const upcoming=d.upcoming||[];
+    const recent=d.recent||[];
+    const pending=d.pending_reports||[];
+    const stats=d.stats||{};
+    const alerts=d.alerts||{};
+    const season=d.season||null;
+
+    const matchMini=(m,mode='upcoming')=>`<article class="dashboard-match-card">
+      <div class="dashboard-match-top"><span>${esc(m.round_name||'Prime League')}</span><strong>${fmtDate(m.match_date)}</strong></div>
+      <div class="dashboard-match-teams">
+        <div>${logo(m.home_logo,m.home_name)}<span>${esc(m.home_name)}</span></div>
+        <b>${mode==='recent'?`${m.home_score??0} – ${m.away_score??0}`:'VS'}</b>
+        <div>${logo(m.away_logo,m.away_name)}<span>${esc(m.away_name)}</span></div>
+      </div>
+      <div class="dashboard-match-bottom">
+        <span>${esc(m.venue||'Campo da definire')}</span>
+        <button class="btn small dashboard-open-match" data-id="${m.id}">${mode==='recent'?'Apri':'Gestisci'}</button>
+      </div>
+    </article>`;
+
+    const alertItems=[
+      {count:Number(alerts.teams_without_logo||0),label:'Squadre senza stemma',route:'teams'},
+      {count:Number(alerts.teams_without_coach||0),label:'Squadre senza allenatore',route:'teams'},
+      {count:Number(alerts.players_without_photo||0),label:'Giocatori senza foto',route:'players'},
+      {count:Number(alerts.matches_without_venue||0),label:'Partite senza campo',route:'matches'},
+      {count:Number(alerts.pending_submissions||0),label:'Invii squadra da verificare',route:'submissions'}
+    ];
+
+    set(dashLayout(`<div class="admin-page-head dashboard-admin-head">
+      <div><span class="eyebrow">Centro di controllo</span><h2>Panoramica</h2><p>${season?`Stagione attiva: ${esc(season.name)}`:'Nessuna stagione attiva configurata'}</p></div>
+      <div class="dashboard-season-pill">${season?esc(stats.current_round||'Giornata da definire'):'Configura stagione'}</div>
+    </div>
+
+    <section class="dashboard-kpis">
+      <a href="#/dashboard/teams"><span>Squadre attive</span><b>${stats.active_teams||0}</b><small>su ${stats.total_teams||0} totali</small></a>
+      <a href="#/dashboard/players"><span>Giocatori attivi</span><b>${stats.active_players||0}</b><small>tesserati disponibili</small></a>
+      <a href="#/dashboard/matches"><span>Partite disputate</span><b>${stats.played_matches||0}</b><small>${stats.upcoming_matches||0} ancora da giocare</small></a>
+      <a href="#/dashboard/submissions" class="${Number(stats.missing_reports||0)>0?'warning':''}"><span>Referti mancanti</span><b>${stats.missing_reports||0}</b><small>${stats.pending_submissions||0} invii in attesa</small></a>
+    </section>
+
+    <section class="dashboard-main-grid">
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-head"><div><span>Calendario</span><h3>Prossime partite</h3></div><a class="btn small" href="#/dashboard/matches">Vedi tutte</a></div>
+        <div class="dashboard-match-list">${upcoming.map(m=>matchMini(m)).join('')||'<div class="dashboard-empty">Nessuna partita in programma.</div>'}</div>
+      </div>
+
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-head"><div><span>Controlli</span><h3>Referti da completare</h3></div><a class="btn small" href="#/dashboard/submissions">Apri referti</a></div>
+        <div class="dashboard-report-list">${pending.map(r=>`<article>
+          <div><span>${esc(r.round_name||'Prime League')}</span><strong>${esc(r.home_name)} – ${esc(r.away_name)}</strong><small>${r.reason==='pending_submission'?'Invio squadra da verificare':'Risultato ancora da inserire'}</small></div>
+          <button class="btn small dashboard-report" data-id="${r.id}">Compila</button>
+        </article>`).join('')||'<div class="dashboard-empty success">Tutti i referti sono aggiornati.</div>'}</div>
+      </div>
+    </section>
+
+    <section class="dashboard-secondary-grid">
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-head"><div><span>Risultati</span><h3>Ultime partite</h3></div><a class="btn small" href="#/dashboard/matches">Archivio</a></div>
+        <div class="dashboard-match-list">${recent.map(m=>matchMini(m,'recent')).join('')||'<div class="dashboard-empty">Nessun risultato pubblicato.</div>'}</div>
+      </div>
+
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-head"><div><span>Qualità dati</span><h3>Avvisi</h3></div></div>
+        <div class="dashboard-alert-list">${alertItems.map(a=>`<a class="dashboard-alert ${a.count===0?'ok':''}" href="#/dashboard/${a.route}">
+          <span>${a.count===0?'✓':'!'}</span><div><strong>${a.label}</strong><small>${a.count===0?'Nessuna anomalia':`${a.count} elementi da controllare`}</small></div><b>›</b>
+        </a>`).join('')}</div>
+      </div>
+    </section>
+
+    <section class="dashboard-panel dashboard-actions-panel">
+      <div class="dashboard-panel-head"><div><span>Operazioni</span><h3>Azioni rapide</h3></div></div>
+      <div class="dashboard-actions">
+        <a href="#/dashboard/teams"><span>＋</span><strong>Nuova squadra</strong><small>Gestisci identità e rosa</small></a>
+        <a href="#/dashboard/players"><span>＋</span><strong>Nuovo giocatore</strong><small>Aggiungi alla rosa</small></a>
+        <a href="#/dashboard/matches"><span>＋</span><strong>Nuova partita</strong><small>Crea o modifica una gara</small></a>
+        <a href="#/dashboard/calendar"><span>▦</span><strong>Calendario</strong><small>Genera o modifica giornate</small></a>
+        <a href="#/dashboard/submissions"><span>✓</span><strong>Compila referto</strong><small>Risultati ed eventi</small></a>
+        <a href="#/dashboard/news"><span>✎</span><strong>Nuova news</strong><small>Pubblica un aggiornamento</small></a>
+        <a href="#/dashboard/sponsors"><span>★</span><strong>Aggiungi sponsor</strong><small>Gestisci partner e loghi</small></a>
+      </div>
+    </section>`,section),'');
+    bindLogout();
+
+    document.querySelectorAll('.dashboard-open-match,.dashboard-report').forEach(btn=>btn.onclick=()=>{
+      state.pendingReportMatchId=Number(btn.dataset.id);
+      manageMatches();
+    });
+    return;
+  }
+
   if(section==='seasons') return manageSeasons();
   if(section==='calendar') return manageCalendar();
   if(section==='teams') return adminTeams();
@@ -396,7 +497,6 @@ async function dashboard(section='overview'){
   if(section==='news') return manageNews();
   if(section==='polls') return managePolls();
 }
-
 async function manageSeasons(){
   const d=await api('admin/seasons');
   const rows=(d.seasons||[]).map(s=>`<tr><td><b>${esc(s.name)}</b>${s.is_current?'<span class="admin-current-badge">In corso</span>':''}</td><td>${esc(s.competition_name||'Prime League')}</td><td>${s.start_date?fmtDate(s.start_date):'—'}</td><td>${s.end_date?fmtDate(s.end_date):'—'}</td><td><div class="admin-row-actions"><button class="btn small edit-season" data-id="${s.id}">Modifica</button>${!s.is_current?`<button class="btn small primary current-season" data-id="${s.id}">Imposta attuale</button>`:''}<button class="btn small danger delete-season" data-id="${s.id}">Elimina</button></div></td></tr>`).join('');
