@@ -150,6 +150,7 @@ async function matchDetail(id){
   const scheduled=!published;
   const events=d.events||[];
   const goals=events.filter(e=>e.event_type==='goal');
+  const assists=goals.filter(e=>e.assist_player_id && e.assist_name);
   const yellows=events.filter(e=>e.event_type==='yellow');
   const reds=events.filter(e=>e.event_type==='red');
   const homeGoals=goals.filter(e=>e.team_id===m.home_team_id);
@@ -159,8 +160,9 @@ async function matchDetail(id){
   const dateOnly=new Intl.DateTimeFormat('it-IT',{weekday:'long',day:'2-digit',month:'long',year:'numeric'}).format(new Date(m.match_date));
   const statusLabel=published?'RISULTATO FINALE':'IN PROGRAMMA';
   const formDots=(items)=>items.length?items.map(x=>`<span class="form-dot ${x}">${x.toUpperCase()}</span>`).join(''):'<span class="muted">Nessun dato</span>';
-  const person=(e,label='')=>`<a class="match-person" href="${e.player_slug?`#/giocatore/${esc(e.player_slug)}`:'#'}"><span class="match-person-icon">${e.event_type==='goal'?'⚽':e.event_type==='yellow'?'🟨':'🟥'}</span><div><strong>${esc(e.player_name||'Giocatore')}</strong>${label?`<small>${esc(label)}</small>`:''}${e.assist_name?`<small>Assist: ${esc(e.assist_name)}</small>`:''}</div><b>${e.quantity>1?'×'+e.quantity:''}</b></a>`;
-  const eventGroup=(title,rows,empty)=>`<article class="match-data-card"><div class="match-data-head"><span>${title}</span><b>${rows.reduce((s,e)=>s+(Number(e.quantity)||1),0)}</b></div><div class="match-data-list">${rows.length?rows.map(e=>person(e)).join(''):`<div class="match-data-empty">${empty}</div>`}</div></article>`;
+  const person=(e,label='')=>`<a class="match-person" href="${e.player_slug?`#/giocatore/${esc(e.player_slug)}`:'#'}"><span class="match-person-icon">${e.event_type==='goal'?'⚽':e.event_type==='yellow'?'🟨':'🟥'}</span><div><strong>${esc(e.player_name||'Giocatore')}</strong><small>${esc(e.team_name||'')}</small>${label?`<small>${esc(label)}</small>`:''}${e.assist_name?`<small>Assist: ${esc(e.assist_name)}</small>`:''}</div><b>${e.quantity>1?'×'+e.quantity:''}</b></a>`;
+  const assistPerson=(e)=>`<a class="match-person" href="${e.assist_slug?`#/giocatore/${esc(e.assist_slug)}`:'#'}"><span class="match-person-icon">🎯</span><div><strong>${esc(e.assist_name||'Giocatore')}</strong><small>${esc(e.team_name||'')}</small><small>Assist per ${esc(e.player_name||'gol')}</small></div><b>${e.quantity>1?'×'+e.quantity:''}</b></a>`;
+  const eventGroup=(title,rows,empty,renderer=person)=>`<article class="match-data-card"><div class="match-data-head"><span>${title}</span><b>${rows.reduce((sum,e)=>sum+(Number(e.quantity)||1),0)}</b></div><div class="match-data-list">${rows.length?rows.map(e=>renderer(e)).join(''):`<div class="match-data-empty">${empty}</div>`}</div></article>`;
   const scorerList=(rows,side)=>rows.length?rows.map(e=>`<div class="score-event ${side}"><span>${esc(e.player_name||'Giocatore')}${e.quantity>1?` ×${e.quantity}`:''}</span><i>⚽</i></div>`).join(''):'';
 
   set(`<section class="single-match-hero">
@@ -183,10 +185,11 @@ async function matchDetail(id){
   </section>
 
   ${published?`<section class="single-match-section"><div class="section-head"><div><span class="eyebrow">Dati ufficiali</span><h2>Protagonisti della partita</h2></div></div>
-    <div class="match-data-grid">
+    <div class="match-data-grid four">
       ${eventGroup('Marcatori',goals,'Nessun marcatore registrato.')}
-      ${eventGroup('Ammonizioni',yellows,'Nessuna ammonizione.')}
-      ${eventGroup('Espulsioni',reds,'Nessuna espulsione.')}
+      ${eventGroup('Assist',assists,'Nessun assist registrato.',assistPerson)}
+      ${eventGroup('Ammoniti',yellows,'Nessuna ammonizione.')}
+      ${eventGroup('Espulsi',reds,'Nessuna espulsione.')}
     </div>
   </section>`:''}
 

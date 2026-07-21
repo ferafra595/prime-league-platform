@@ -230,3 +230,25 @@
 .form-panel h3,.share-panel h3{margin:7px 0 16px}.form-team{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--line);font-size:.75rem;font-weight:800}.form-dot{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:50%;margin-left:4px;font-size:.56rem;color:#fff;font-weight:950}.form-dot.w{background:#18a558}.form-dot.d{background:#a6afbd}.form-dot.l{background:#df3f4d}.highlights-card{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#165dff,#0c3f9d);color:#fff;padding:19px;border-radius:18px;box-shadow:0 14px 30px rgba(22,93,255,.24)}.highlights-card>span{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.16)}.highlights-card small,.highlights-card strong{display:block}.highlights-card small{font-size:.58rem;letter-spacing:.12em;color:#cfe0ff}.highlights-card strong{margin-top:3px}.share-panel .btn{width:100%;margin-top:8px}.related-matches{margin-bottom:0}
 @media(max-width:900px){.single-match-layout{grid-template-columns:1fr}.match-data-grid{grid-template-columns:1fr}.match-facts{grid-template-columns:repeat(2,1fr)}.match-mvp-premium{grid-template-columns:1fr 210px}.single-team .logo{width:94px;height:94px}}
 @media(max-width:650px){.single-match-hero{margin-left:-8px;margin-right:-8px;padding:18px 14px 26px;border-radius:20px}.single-match-nav{font-size:.62rem}.single-match-status p{font-size:.68rem;line-height:1.5}.single-scoreboard{gap:8px}.single-team .logo{width:68px;height:68px;border-radius:18px;padding:7px}.single-team strong{font-size:.78rem}.single-team small{display:none}.single-score{min-width:72px}.single-score span{font-size:2.7rem}.single-score i{margin:0 4px}.score-events{gap:15px}.single-countdown{padding:14px 8px}.single-countdown b{font-size:1.15rem}.match-facts{grid-template-columns:1fr 1fr}.match-facts>div{padding:14px}.match-mvp-premium{min-height:300px;grid-template-columns:1fr;padding:24px}.mvp-photo{position:absolute;right:-10px;bottom:0;width:48%;height:220px;opacity:.62}.mvp-copy{max-width:70%}.mvp-copy h2{font-size:2rem}.single-match-section{margin:26px 0}}
+
+/* Match official events: goals, assists and cards */
+.match-data-grid.four{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+.match-person div{
+  min-width:0;
+}
+.match-person div strong,
+.match-person div small{
+  display:block;
+}
+.match-person div small:first-of-type{
+  color:var(--muted,#64748b);
+  margin-top:3px;
+}
+@media (max-width:1100px){
+  .match-data-grid.four{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media (max-width:640px){
+  .match-data-grid.four{grid-template-columns:1fr;}
+}
