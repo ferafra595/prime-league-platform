@@ -8,59 +8,19 @@ const safeText = (value) => typeof value === 'string' ? value.trim() : value;
 
 
 async function ensureAuthSchema(env) {
-  // Compatibility layer: the original database accepts only admin/team/fan.
-  // Extended application roles are stored separately, without destructive migrations.
-  // Create the authentication tables before creating indexes.
-  // Existing Prime League databases may only contain the original `users` table.
-  await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_roles (
-      user_id INTEGER PRIMARY KEY,
-      role TEXT NOT NULL CHECK(role IN ('organizer','team_manager','referee','fan')),
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
-      token TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      expires_at TEXT NOT NULL,
-      used_at TEXT,
-      created_by_user_id INTEGER,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS audit_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      action TEXT NOT NULL,
-      entity_type TEXT,
-      entity_id TEXT,
-      details TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`)
-  ]);
-
-  await env.DB.batch([
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id)'),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)'),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_auth_roles_role ON auth_roles(role)')
-  ]);
+  // The production database already contains users and sessions.
+  // Do not run schema migrations on every request: this keeps Pages Functions stable.
+  if (!env.DB) throw new Error('Binding D1 DB non configurato');
 }
 
 function storageRole(role) {
-  if (role === 'admin') return 'admin';
-  if (role === 'team_manager') return 'team';
-  return 'fan';
+  if (role === 'team') return 'team';
+  if (role === 'referee') return 'fan';
+  return 'admin';
 }
 
-async function setExtendedRole(env, userId, role) {
-  await env.DB.prepare(`INSERT INTO auth_roles(user_id,role,updated_at)
-    VALUES(?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(user_id) DO UPDATE SET role=excluded.role,updated_at=CURRENT_TIMESTAMP`)
-    .bind(userId, role).run();
+async function setExtendedRole() {
+  // Not needed: the existing users.role field is the source of truth.
 }
 
 async function hashPassword(password, salt = crypto.randomUUID()) {
@@ -83,8 +43,8 @@ function cookie(name, value, maxAge = 60 * 60 * 24 * 14) {
 async function currentUser(request, env) {
   const token = (request.headers.get('cookie') || '').split(';').map(v => v.trim()).find(v => v.startsWith('pl_session='))?.split('=')[1];
   if (!token) return null;
-  return env.DB.prepare(`SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.avatar_url
-    FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN auth_roles ar ON ar.user_id=u.id
+  return env.DB.prepare(`SELECT u.id,u.email,u.username,u.role,u.team_id,u.display_name,u.avatar_url
+    FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.id=? AND s.expires_at > datetime('now') AND u.is_active=1`).bind(token).first();
 }
 
@@ -96,7 +56,8 @@ function requireRole(user, ...roles) {
 
 const ROLE_ALIASES = {
   admin: 'admin',
-  team: 'team_manager'
+  team: 'team',
+  fan: 'referee'
 };
 function normalizedRole(user) { return user ? (ROLE_ALIASES[user.role] || user.role) : null; }
 function hasRole(user, ...roles) { return !!user && roles.includes(normalizedRole(user)); }
@@ -116,8 +77,13 @@ async function body(request) {
 }
 
 async function audit(env, userId, action, entityType = null, entityId = null, details = null) {
-  await env.DB.prepare('INSERT INTO audit_log(user_id,action,entity_type,entity_id,details) VALUES(?,?,?,?,?)')
-    .bind(userId || null, action, entityType, entityId ? String(entityId) : null, details ? JSON.stringify(details) : null).run();
+  // Audit must never block login or normal operations.
+  try {
+    await env.DB.prepare('INSERT INTO audit_log(user_id,action,entity_type,entity_id,details) VALUES(?,?,?,?,?)')
+      .bind(userId || null, action, entityType, entityId ? String(entityId) : null, details ? JSON.stringify(details) : null).run();
+  } catch (error) {
+    console.warn('Audit non disponibile:', error?.message || error);
+  }
 }
 
 async function standings(env, requestedSeasonId = null) {
@@ -170,24 +136,30 @@ async function route(request, env, path) {
   if (path === 'setup' && method === 'POST') {
     const data = await body(request);
     if (!env.SETUP_TOKEN || data.setupToken !== env.SETUP_TOKEN) return json({ error:'Token di configurazione non valido' }, 403);
-    const existing = await env.DB.prepare("SELECT u.id FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id WHERE COALESCE(ar.role,u.role) = 'admin' LIMIT 1").first();
+    const existing = await env.DB.prepare("SELECT id FROM users WHERE role='admin' LIMIT 1").first();
     if (existing) return json({ error:'Amministratore già configurato' }, 409);
     if (!data.email || !data.password || data.password.length < 8) return json({ error:'Email e password di almeno 8 caratteri sono obbligatorie' }, 400);
     const hash = await hashPassword(data.password);
-    const created = await env.DB.prepare("INSERT INTO users(email,username,password_hash,role,display_name) VALUES(?,?,?,?,?)")
-      .bind(data.email.toLowerCase(), safeText(data.username || 'admin'), hash, 'admin', safeText(data.displayName || 'Amministratore Prime League')).run();
-        return json({ ok:true });
+    try {
+      await env.DB.prepare("INSERT INTO users(email,username,password_hash,role,display_name) VALUES(?,?,?,?,?)")
+        .bind(data.email.toLowerCase(), safeText(data.username || 'admin'), hash, 'admin', safeText(data.displayName || 'Admin')).run();
+    } catch (error) {
+      const message = String(error?.message || '');
+      if (message.includes('UNIQUE')) return json({ error:'Email o username già utilizzati' }, 409);
+      throw error;
+    }
+    return json({ ok:true });
   }
 
   if (path === 'auth/login' && method === 'POST') {
     const data = await body(request);
-    const found = await env.DB.prepare(`SELECT u.*,COALESCE(ar.role,u.role) effective_role FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id WHERE (u.email=? OR u.username=?) AND u.is_active=1`).bind((data.login||'').toLowerCase(), data.login||'').first();
+    const found = await env.DB.prepare(`SELECT u.* FROM users u WHERE (u.email=? OR u.username=?) AND u.is_active=1`).bind((data.login||'').toLowerCase(), data.login||'').first();
     if (!found || !(await verifyPassword(data.password || '', found.password_hash))) return json({ error:'Credenziali non valide' }, 401);
     await env.DB.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now') OR (user_id=? AND created_at < datetime('now','-30 days'))").bind(found.id).run();
     const token = crypto.randomUUID() + crypto.randomUUID().replaceAll('-','');
     await env.DB.prepare("INSERT INTO sessions(id,user_id,expires_at) VALUES(?,?,datetime('now','+14 days'))").bind(token, found.id).run();
     await audit(env, found.id, 'login');
-    return json({ ok:true, user:{id:found.id,email:found.email,role:(ROLE_ALIASES[found.effective_role||found.role]||found.effective_role||found.role),team_id:found.team_id,display_name:found.display_name} }, 200, { 'set-cookie':cookie('pl_session',token) });
+    return json({ ok:true, user:{id:found.id,email:found.email,role:(ROLE_ALIASES[found.role]||found.role),team_id:found.team_id,display_name:found.display_name} }, 200, { 'set-cookie':cookie('pl_session',token) });
   }
 
   if (path === 'auth/logout' && method === 'POST') {
@@ -228,16 +200,8 @@ async function route(request, env, path) {
     return json({ok:true});
   }
 
-  if (path === 'auth/register-fan' && method === 'POST') {
-    const data = await body(request);
-    if (!data.email || !data.password || data.password.length < 8 || !data.displayName) return json({error:'Dati non validi'},400);
-    try {
-      const hash = await hashPassword(data.password);
-      const created = await env.DB.prepare("INSERT INTO users(email,password_hash,role,display_name) VALUES(?,?, 'fan',?)").bind(data.email.toLowerCase(),hash,safeText(data.displayName)).run();
-      await setExtendedRole(env, created.meta.last_row_id, 'fan');
-      return json({ok:true},201);
-    } catch { return json({error:'Email già registrata'},409); }
-  }
+  if (path === 'auth/register-fan' && method === 'POST') return json({ error:'Registrazione pubblica disattivata' }, 403);
+
 
   if (path === 'public/home') return json(await publicDashboard(env));
   if (path === 'public/standings') {
@@ -491,7 +455,7 @@ async function route(request, env, path) {
     return json({polls:polls.results,authenticated:!!user});
   }
   if (path === 'vote' && method === 'POST') {
-    const denied = requireAnyRole(user,'fan','admin','organizer','team_manager','referee'); if (denied) return denied;
+    const denied = requireAnyRole(user,'fan','admin','team','referee'); if (denied) return denied;
     const data = await body(request);
     const option = await env.DB.prepare(`SELECT o.id,o.poll_id,p.status,p.starts_at,p.ends_at FROM poll_options o JOIN polls p ON p.id=o.poll_id WHERE o.id=?`).bind(data.optionId).first();
     if (!option || option.status!=='open') return json({error:'Votazione non disponibile'},400);
@@ -502,8 +466,8 @@ async function route(request, env, path) {
 
   // Dashboard data
   if (path === 'dashboard') {
-    const denied = requireAnyRole(user,'admin','organizer','team_manager','referee'); if (denied) return denied;
-    if (hasRole(user,'admin','organizer')) {
+    const denied = requireAnyRole(user,'admin','team','referee'); if (denied) return denied;
+    if (hasRole(user,'admin')) {
       const counts = {};
       for (const table of ['teams','players','matches','users','sponsors']) counts[table] = (await env.DB.prepare(`SELECT COUNT(*) c FROM ${table}`).first()).c;
       counts.pending = (await env.DB.prepare("SELECT COUNT(*) c FROM match_submissions WHERE status='pending'").first()).c;
@@ -521,7 +485,7 @@ async function route(request, env, path) {
   }
 
   if (path === 'admin/seasons') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied;
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     if(method==='GET') return json({seasons:(await env.DB.prepare(`SELECT s.*,c.name competition_name FROM seasons s JOIN competitions c ON c.id=s.competition_id ORDER BY s.is_current DESC,s.start_date DESC,s.id DESC`).all()).results});
     if(method==='POST') {
       const d=await body(request); if(!d.name)return json({error:'Nome stagione obbligatorio'},400);
@@ -531,60 +495,60 @@ async function route(request, env, path) {
     }
   }
   if (path.match(/^admin\/seasons\/\d+$/) && method==='PUT') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
     if(!d.name)return json({error:'Nome stagione obbligatorio'},400);
     if(d.is_current) await env.DB.prepare('UPDATE seasons SET is_current=0').run();
     await env.DB.prepare('UPDATE seasons SET name=?,start_date=?,end_date=?,is_current=? WHERE id=?').bind(safeText(d.name),d.start_date||null,d.end_date||null,d.is_current?1:0,id).run();
     await audit(env,user.id,'update','season',id,d); return json({ok:true});
   }
   if (path.match(/^admin\/seasons\/\d+\/current$/) && method==='POST') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const id=Number(path.split('/')[2]);
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const id=Number(path.split('/')[2]);
     await env.DB.prepare('UPDATE seasons SET is_current=0').run(); await env.DB.prepare('UPDATE seasons SET is_current=1 WHERE id=?').bind(id).run();
     await audit(env,user.id,'set_current','season',id,{}); return json({ok:true});
   }
 
   // Generic admin list endpoints
   if (path === 'admin/teams') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied;
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     if(method==='GET') return json({teams:(await env.DB.prepare('SELECT * FROM teams ORDER BY name').all()).results});
     if(method==='POST') { const d=await body(request); if(!d.name)return json({error:'Nome obbligatorio'},400); const result=await env.DB.prepare('INSERT INTO teams(name,slug,short_name,logo_url,primary_color,secondary_color,manager_name,coach_name,description) VALUES(?,?,?,?,?,?,?,?,?)').bind(safeText(d.name),slugify(d.slug||d.name),safeText(d.short_name||''),safeText(d.logo_url||''),d.primary_color||'#7c3cff',d.secondary_color||'#ffffff',safeText(d.manager_name||''),safeText(d.coach_name||''),safeText(d.description||'')).run(); await audit(env,user.id,'create','team',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path.match(/^admin\/teams\/\d+$/)) {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
     if(method==='PUT') { await env.DB.prepare('UPDATE teams SET name=?,slug=?,short_name=?,logo_url=?,primary_color=?,secondary_color=?,manager_name=?,coach_name=?,description=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(d.name,slugify(d.slug||d.name),d.short_name||'',d.logo_url||'',d.primary_color||'#7c3cff',d.secondary_color||'#ffffff',d.manager_name||'',d.coach_name||'',d.description||'',d.is_active===0?0:1,id).run(); await audit(env,user.id,'update','team',id,d); return json({ok:true}); }
     if(method==='DELETE') { await env.DB.prepare('UPDATE teams SET is_active=0 WHERE id=?').bind(id).run(); await audit(env,user.id,'disable','team',id); return json({ok:true}); }
   }
   if (path === 'admin/players' || path === 'team/players') {
-    const denied=requireAnyRole(user,'admin','organizer','team_manager'); if(denied)return denied;
-    const teamFilter=hasRole(user,'team_manager')?user.team_id:null;
+    const denied=requireAnyRole(user,'admin','team'); if(denied)return denied;
+    const teamFilter=hasRole(user,'team')?user.team_id:null;
     if(method==='GET') { const q=teamFilter?env.DB.prepare('SELECT p.*,t.name team_name FROM players p JOIN teams t ON t.id=p.team_id WHERE p.team_id=? ORDER BY p.last_name').bind(teamFilter):env.DB.prepare('SELECT p.*,t.name team_name FROM players p JOIN teams t ON t.id=p.team_id ORDER BY t.name,p.last_name'); return json({players:(await q.all()).results}); }
     if(method==='POST') { const d=await body(request); const teamId=teamFilter||Number(d.team_id); if(!teamId||!d.first_name||!d.last_name||!d.role)return json({error:'Dati obbligatori mancanti'},400); const result=await env.DB.prepare('INSERT INTO players(team_id,first_name,last_name,slug,shirt_number,role,photo_url) VALUES(?,?,?,?,?,?,?)').bind(teamId,safeText(d.first_name),safeText(d.last_name),slugify(d.slug||`${d.first_name}-${d.last_name}-${crypto.randomUUID().slice(0,5)}`),d.shirt_number?Number(d.shirt_number):null,d.role,d.photo_url||'').run(); await audit(env,user.id,'create','player',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path.match(/^(admin|team)\/players\/\d+$/)) {
-    const denied=requireAnyRole(user,'admin','organizer','team_manager'); if(denied)return denied; const id=Number(path.split('/').pop()); const existing=await env.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first(); if(!existing)return json({error:'Non trovato'},404); if(hasRole(user,'team_manager')&&existing.team_id!==user.team_id)return json({error:'Permessi insufficienti'},403); const d=await body(request);
-    if(method==='PUT') { const teamId=hasRole(user,'team_manager')?user.team_id:Number(d.team_id||existing.team_id); await env.DB.prepare('UPDATE players SET team_id=?,first_name=?,last_name=?,slug=?,shirt_number=?,role=?,photo_url=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(teamId,d.first_name,d.last_name,slugify(d.slug||`${d.first_name}-${d.last_name}-${id}`),d.shirt_number?Number(d.shirt_number):null,d.role,d.photo_url||'',d.is_active===0?0:1,id).run(); await audit(env,user.id,'update','player',id,d); return json({ok:true}); }
+    const denied=requireAnyRole(user,'admin','team'); if(denied)return denied; const id=Number(path.split('/').pop()); const existing=await env.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first(); if(!existing)return json({error:'Non trovato'},404); if(hasRole(user,'team')&&existing.team_id!==user.team_id)return json({error:'Permessi insufficienti'},403); const d=await body(request);
+    if(method==='PUT') { const teamId=hasRole(user,'team')?user.team_id:Number(d.team_id||existing.team_id); await env.DB.prepare('UPDATE players SET team_id=?,first_name=?,last_name=?,slug=?,shirt_number=?,role=?,photo_url=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(teamId,d.first_name,d.last_name,slugify(d.slug||`${d.first_name}-${d.last_name}-${id}`),d.shirt_number?Number(d.shirt_number):null,d.role,d.photo_url||'',d.is_active===0?0:1,id).run(); await audit(env,user.id,'update','player',id,d); return json({ok:true}); }
     if(method==='DELETE') { await env.DB.prepare('UPDATE players SET is_active=0 WHERE id=?').bind(id).run(); await audit(env,user.id,'disable','player',id); return json({ok:true}); }
   }
   if (path === 'admin/matches') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied;
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     if(method==='GET') return json({matches:(await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`).all()).results});
     if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO matches(season_id,round_name,home_team_id,away_team_id,match_date,venue,status) VALUES(?,?,?,?,?,?,?)').bind(Number(d.season_id||1),d.round_name||'',Number(d.home_team_id),Number(d.away_team_id),d.match_date,d.venue||'',d.status||'scheduled').run(); await audit(env,user.id,'create','match',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path.match(/^admin\/matches\/\d+$/) && method==='PUT') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
     await env.DB.prepare('UPDATE matches SET round_name=?,home_team_id=?,away_team_id=?,match_date=?,venue=?,status=?,home_score=?,away_score=?,highlights_url=?,mvp_player_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(d.round_name||'',Number(d.home_team_id),Number(d.away_team_id),d.match_date,d.venue||'',d.status||'scheduled',d.home_score===''?null:Number(d.home_score),d.away_score===''?null:Number(d.away_score),d.highlights_url||'',d.mvp_player_id?Number(d.mvp_player_id):null,id).run();
     if(Array.isArray(d.events)) { await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(id).run(); for(const e of d.events) await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)').bind(id,Number(e.team_id),e.player_id?Number(e.player_id):null,e.assist_player_id?Number(e.assist_player_id):null,e.event_type,Number(e.quantity||1)).run(); }
     await audit(env,user.id,'update','match',id,d); return json({ok:true});
   }
   if (path === 'team/matches') {
-    const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied;
+    const denied=requireAnyRole(user,'team','referee'); if(denied)return denied;
     const q=hasRole(user,'referee')
       ? env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`)
       : env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.home_team_id=? OR m.away_team_id=? ORDER BY m.match_date DESC`).bind(user.team_id,user.team_id);
     const rows=await q.all(); return json({matches:rows.results});
   }
   if (path === 'team/submissions' && method==='POST') {
-    const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied; const d=await body(request);
+    const denied=requireAnyRole(user,'team','referee'); if(denied)return denied; const d=await body(request);
     const match=hasRole(user,'referee')
       ? await env.DB.prepare('SELECT * FROM matches WHERE id=?').bind(Number(d.match_id)).first()
       : await env.DB.prepare('SELECT * FROM matches WHERE id=? AND (home_team_id=? OR away_team_id=?)').bind(Number(d.match_id),user.team_id,user.team_id).first();
@@ -593,27 +557,26 @@ async function route(request, env, path) {
     const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),d.notes||'').run(); await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true},201);
   }
   if (path === 'admin/submissions') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,m.round_name,ht.name home_name,at.name away_name,u.display_name submitted_by FROM match_submissions s JOIN teams t ON t.id=s.team_id JOIN users u ON u.id=s.submitted_by_user_id JOIN matches m ON m.id=s.match_id JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END,s.created_at DESC`).all(); return json({submissions:rows.results});
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,m.round_name,ht.name home_name,at.name away_name,u.display_name submitted_by FROM match_submissions s JOIN teams t ON t.id=s.team_id JOIN users u ON u.id=s.submitted_by_user_id JOIN matches m ON m.id=s.match_id JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END,s.created_at DESC`).all(); return json({submissions:rows.results});
   }
   if (path.match(/^admin\/submissions\/\d+\/(approve|reject)$/) && method==='POST') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied; const parts=path.split('/'); const id=Number(parts[2]); const action=parts[3]; const d=await body(request); const s=await env.DB.prepare('SELECT * FROM match_submissions WHERE id=?').bind(id).first(); if(!s)return json({error:'Invio non trovato'},404);
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied; const parts=path.split('/'); const id=Number(parts[2]); const action=parts[3]; const d=await body(request); const s=await env.DB.prepare('SELECT * FROM match_submissions WHERE id=?').bind(id).first(); if(!s)return json({error:'Invio non trovato'},404);
     if(action==='approve') { await env.DB.prepare("UPDATE match_submissions SET status='approved',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").bind(d.admin_note||'',id).run(); await env.DB.prepare("UPDATE matches SET home_score=?,away_score=?,status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(s.home_score,s.away_score,s.match_id).run(); const events=JSON.parse(s.events_json||'[]'); await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(s.match_id).run(); for(const e of events) await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)').bind(s.match_id,Number(e.team_id),e.player_id?Number(e.player_id):null,e.assist_player_id?Number(e.assist_player_id):null,e.event_type,Number(e.quantity||1)).run(); }
     else await env.DB.prepare("UPDATE match_submissions SET status='rejected',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").bind(d.admin_note||'',id).run(); await audit(env,user.id,action,'match_submission',id,d); return json({ok:true});
   }
   if (path === 'admin/users') {
     const denied=requireAnyRole(user,'admin'); if(denied)return denied;
-    if(method==='GET') { const rows=(await env.DB.prepare('SELECT u.id,u.email,u.username,COALESCE(ar.role,u.role) role,u.team_id,u.display_name,u.is_active,u.created_at FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id ORDER BY role,display_name').all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
-    if(method==='POST') { const d=await body(request); if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400); const role=['admin','team_manager','referee'].includes(d.role)?d.role:'team_manager'; const hash=await hashPassword(d.password); const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)').bind(d.email.toLowerCase(),d.username||null,hash,storageRole(role),d.team_id?Number(d.team_id):null,d.display_name).run(); if (role !== 'admin') await setExtendedRole(env,result.meta.last_row_id,role); await audit(env,user.id,'create','user',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    if(method==='GET') { const rows=(await env.DB.prepare('SELECT u.id,u.email,u.username,u.role,u.team_id,u.display_name,u.is_active,u.created_at FROM users u ORDER BY role,display_name').all()).results.map(u=>({...u,role:ROLE_ALIASES[u.role]||u.role})); return json({users:rows}); }
+    if(method==='POST') { const d=await body(request); if(!d.email||!d.password||d.password.length<10||!d.display_name)return json({error:'Nome, email e password di almeno 10 caratteri sono obbligatori'},400); const role=['admin','team','referee'].includes(d.role)?d.role:'referee'; const hash=await hashPassword(d.password); const result=await env.DB.prepare('INSERT INTO users(email,username,password_hash,role,team_id,display_name) VALUES(?,?,?,?,?,?)').bind(d.email.toLowerCase(),d.username||null,hash,storageRole(role),d.team_id?Number(d.team_id):null,d.display_name).run(); await audit(env,user.id,'create','user',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
 
   if (path.match(/^admin\/users\/\d+$/) && method==='PUT') {
     const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     const id=Number(path.split('/').pop()), d=await body(request);
-    const role=['admin','team_manager','referee'].includes(d.role)?d.role:'team_manager';
+    const role=['admin','team','referee'].includes(d.role)?d.role:'referee';
     if (id===user.id && d.is_active===0) return json({error:'Non puoi disattivare il tuo account'},400);
     await env.DB.prepare('UPDATE users SET display_name=?,email=?,username=?,role=?,team_id=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
       .bind(safeText(d.display_name),String(d.email||'').toLowerCase(),safeText(d.username||'')||null,storageRole(role),d.team_id?Number(d.team_id):null,d.is_active===0?0:1,id).run();
-    if (role === 'admin') await env.DB.prepare('DELETE FROM auth_roles WHERE user_id=?').bind(id).run(); else await setExtendedRole(env,id,role);
     if(d.is_active===0) await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id).run();
     await audit(env,user.id,'update','user',id,{role,is_active:d.is_active}); return json({ok:true});
   }
@@ -628,17 +591,17 @@ async function route(request, env, path) {
   }
 
   if (path === 'admin/sponsors' || path === 'team/sponsors') {
-    const denied=requireAnyRole(user,'admin','organizer','team_manager'); if(denied)return denied;
-    if(method==='GET') { const q=hasRole(user,'team_manager')?env.DB.prepare("SELECT * FROM sponsors WHERE team_id=? AND level='team' ORDER BY is_featured DESC,name").bind(user.team_id):env.DB.prepare('SELECT s.*,t.name team_name FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id ORDER BY s.level,s.is_featured DESC,s.name'); return json({sponsors:(await q.all()).results}); }
-    if(method==='POST') { const d=await body(request); const level=hasRole(user,'team_manager')?'team':(d.level||'league'); const teamId=hasRole(user,'team_manager')?user.team_id:(level==='team'?Number(d.team_id):null); const result=await env.DB.prepare('INSERT INTO sponsors(name,logo_url,website_url,level,team_id,is_featured) VALUES(?,?,?,?,?,?)').bind(d.name,d.logo_url||'',d.website_url||'',level,teamId,d.is_featured?1:0).run(); await audit(env,user.id,'create','sponsor',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    const denied=requireAnyRole(user,'admin','team'); if(denied)return denied;
+    if(method==='GET') { const q=hasRole(user,'team')?env.DB.prepare("SELECT * FROM sponsors WHERE team_id=? AND level='team' ORDER BY is_featured DESC,name").bind(user.team_id):env.DB.prepare('SELECT s.*,t.name team_name FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id ORDER BY s.level,s.is_featured DESC,s.name'); return json({sponsors:(await q.all()).results}); }
+    if(method==='POST') { const d=await body(request); const level=hasRole(user,'team')?'team':(d.level||'league'); const teamId=hasRole(user,'team')?user.team_id:(level==='team'?Number(d.team_id):null); const result=await env.DB.prepare('INSERT INTO sponsors(name,logo_url,website_url,level,team_id,is_featured) VALUES(?,?,?,?,?,?)').bind(d.name,d.logo_url||'',d.website_url||'',level,teamId,d.is_featured?1:0).run(); await audit(env,user.id,'create','sponsor',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path === 'admin/news') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied;
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     if(method==='GET') return json({news:(await env.DB.prepare('SELECT * FROM news ORDER BY created_at DESC').all()).results});
     if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO news(title,slug,excerpt,body,cover_url,is_published,published_at) VALUES(?,?,?,?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END)').bind(d.title,slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',d.is_published?1:0,d.is_published?1:0).run(); await audit(env,user.id,'create','news',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
   if (path === 'admin/polls') {
-    const denied=requireAnyRole(user,'admin','organizer'); if(denied)return denied;
+    const denied=requireAnyRole(user,'admin'); if(denied)return denied;
     if(method==='GET') { const polls=(await env.DB.prepare('SELECT * FROM polls ORDER BY created_at DESC').all()).results; for(const p of polls)p.options=(await env.DB.prepare('SELECT * FROM poll_options WHERE poll_id=?').bind(p.id).all()).results; return json({polls}); }
     if(method==='POST') { const d=await body(request); const r=await env.DB.prepare('INSERT INTO polls(title,description,poll_type,starts_at,ends_at,status) VALUES(?,?,?,?,?,?)').bind(d.title,d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft').run(); for(const o of (d.options||[])) if(o.label) await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(r.meta.last_row_id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run(); await audit(env,user.id,'create','poll',r.meta.last_row_id,d); return json({ok:true,id:r.meta.last_row_id},201); }
   }
