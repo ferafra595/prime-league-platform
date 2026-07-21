@@ -42,7 +42,7 @@ function message(text,type='notice'){return `<div class="notice ${type}">${esc(t
 
 function matchCard(m){
   const score = m.status==='published' ? `${m.home_score} - ${m.away_score}` : 'VS';
-  return `<article class="card"><div class="match"><div class="team-side">${logo(m.home_logo,m.home_name)}<span>${esc(m.home_name)}</span></div><div class="score">${score}</div><div class="team-side away"><span>${esc(m.away_name)}</span>${logo(m.away_logo,m.away_name)}</div></div><div class="meta">${esc(m.round_name||'')} · ${fmtDate(m.match_date)}${m.venue?' · '+esc(m.venue):''}</div></article>`;
+  return `<a class="card match-card-link" href="#/partita/${m.id}"><div class="match"><div class="team-side">${logo(m.home_logo,m.home_name)}<span>${esc(m.home_name)}</span></div><div class="score">${score}</div><div class="team-side away"><span>${esc(m.away_name)}</span>${logo(m.away_logo,m.away_name)}</div></div><div class="meta">${esc(m.round_name||'')} · ${fmtDate(m.match_date)}${m.venue?' · '+esc(m.venue):''}</div><div class="match-card-cta">Apri scheda partita →</div></a>`;
 }
 function standingsTable(rows){return `<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th></tr></thead><tbody>${rows.map((t,i)=>`<tr><td class="rank">${i+1}</td><td><a href="#/squadra/${t.slug}"><b>${esc(t.name)}</b></a></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td>${t.gd}</td><td><b>${t.points}</b></td></tr>`).join('')}</tbody></table></div>`}
 
@@ -72,7 +72,7 @@ async function home(){loading();const [d,statsData,teamsData]=await Promise.all(
   };
   set(`<section class="season-hero">
     <div class="season-copy"><img class="hero-crest" src="/assets/prime-league-crest.png" alt=""><span class="eyebrow light">Stagione ufficiale 2026/27</span><h1>Prime League</h1><p>Partite, risultati, classifiche e protagonisti. Tutto il campionato in un unico posto.</p><div class="hero-actions"><a class="btn white" href="#/partite">Calendario</a><a class="btn glass" href="#/classifica">Classifica</a></div></div>
-    ${next?`<article class="hero-match"><div class="hero-match-top"><span>${esc(next.round_name||'Prossima giornata')}</span><span>${fmtDate(next.match_date)}</span></div><div class="hero-clubs"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><div class="hero-vs"><b>VS</b><small>${esc(next.venue||'Campo da definire')}</small></div><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><a href="#/partite">Dettagli partita →</a></article>`:'<article class="hero-match empty">Nessuna partita programmata.</article>'}
+    ${next?`<article class="hero-match"><div class="hero-match-top"><span>${esc(next.round_name||'Prossima giornata')}</span><span>${fmtDate(next.match_date)}</span></div><div class="hero-clubs"><div>${logo(next.home_logo,next.home_name)}<strong>${esc(next.home_name)}</strong></div><div class="hero-vs"><b>VS</b><small>${esc(next.venue||'Campo da definire')}</small></div><div>${logo(next.away_logo,next.away_name)}<strong>${esc(next.away_name)}</strong></div></div><a href="#/partita/${next.id}">Dettagli partita →</a></article>`:'<article class="hero-match empty">Nessuna partita programmata.</article>'}
   </section>
 
   ${next?`<section class="countdown-section" data-kickoff="${esc(next.match_date)}"><div class="countdown-overlay"></div><div class="countdown-content"><span>${esc(next.round_name||'Prossima giornata')}</span><h2>Prossima giornata</h2><div class="countdown-grid"><div><b id="cd-days">00</b><small>Giorni</small></div><div><b id="cd-hours">00</b><small>Ore</small></div><div><b id="cd-minutes">00</b><small>Minuti</small></div><div><b id="cd-seconds">00</b><small>Secondi</small></div></div></div></section>`:''}
@@ -117,6 +117,47 @@ async function home(){loading();const [d,statsData,teamsData]=await Promise.all(
   }
 }
 async function matches(){loading();const d=await api('public/matches');set(`<div class="section-head"><div><span class="eyebrow">Calendario ufficiale</span><h2>Partite</h2></div></div><div class="grid two">${d.matches.map(matchCard).join('')||'<div class="card empty">Nessuna partita.</div>'}</div>`,'partite')}
+
+async function matchDetail(id){
+  loading();
+  const d=await api(`public/match/${id}`);
+  const m=d.match;
+  const published=m.status==='published';
+  const eventLabel={goal:'Gol',yellow:'Ammonizione',red:'Espulsione'};
+  const eventIcon={goal:'⚽',yellow:'🟨',red:'🟥'};
+  const homeEvents=(d.events||[]).filter(e=>e.team_id===m.home_team_id);
+  const awayEvents=(d.events||[]).filter(e=>e.team_id===m.away_team_id);
+  const eventRows=(rows)=>rows.length?rows.map(e=>`<div class="match-event-row"><span class="event-symbol">${eventIcon[e.event_type]||'•'}</span><div><strong>${esc(e.player_name||'Giocatore')}</strong>${e.event_type==='goal'&&e.assist_name?`<small>Assist: ${esc(e.assist_name)}</small>`:''}</div><b>${e.quantity>1?'× '+e.quantity:eventLabel[e.event_type]||esc(e.event_type)}</b></div>`).join(''):'<div class="match-empty-line">Nessun evento registrato.</div>';
+  const teamForm=(d.team_form||{home:[],away:[]});
+  const formDots=(items)=>items.map(x=>`<span class="form-dot ${x}">${x.toUpperCase()}</span>`).join('')||'<span class="muted">Nessun dato</span>';
+  set(`<section class="match-detail-hero">
+    <div class="match-detail-top"><a href="#/partite">← Tutte le partite</a><span>${esc(m.round_name||'Prime League')}</span></div>
+    <div class="match-detail-meta"><span>${fmtDate(m.match_date)}</span><i></i><span>${esc(m.venue||'Campo da definire')}</span><i></i><span class="match-status ${esc(m.status)}">${published?'Terminata':'In programma'}</span></div>
+    <div class="match-scoreboard">
+      <a href="#/squadra/${esc(m.home_slug)}" class="match-club">${logo(m.home_logo,m.home_name)}<strong>${esc(m.home_name)}</strong><small>Casa</small></a>
+      <div class="match-main-score"><span>${published?`${m.home_score}<b>-</b>${m.away_score}`:'VS'}</span><small>${published?'Risultato finale':new Intl.DateTimeFormat('it-IT',{hour:'2-digit',minute:'2-digit'}).format(new Date(m.match_date))}</small></div>
+      <a href="#/squadra/${esc(m.away_slug)}" class="match-club">${logo(m.away_logo,m.away_name)}<strong>${esc(m.away_name)}</strong><small>Trasferta</small></a>
+    </div>
+    ${m.mvp_player_id?`<a class="match-mvp" href="#/giocatore/${esc(m.mvp_slug)}"><span>⭐ MVP DELLA PARTITA</span>${avatar(m.mvp_photo,m.mvp_name)}<div><strong>${esc(m.mvp_name)}</strong><small>${esc(m.mvp_team_name||'')}</small></div></a>`:''}
+  </section>
+
+  <section class="match-detail-grid">
+    <article class="panel match-info-panel"><div class="panel-head"><div><span class="eyebrow">Dettagli ufficiali</span><h2>${published?'Cronaca essenziale':'Informazioni partita'}</h2></div></div>
+      ${published?`<div class="events-columns"><div><h3>${esc(m.home_name)}</h3>${eventRows(homeEvents)}</div><div><h3>${esc(m.away_name)}</h3>${eventRows(awayEvents)}</div></div>`:
+      `<div class="pre-match-info"><div><span>Giornata</span><strong>${esc(m.round_name||'Da definire')}</strong></div><div><span>Data e ora</span><strong>${fmtDate(m.match_date)}</strong></div><div><span>Campo</span><strong>${esc(m.venue||'Da definire')}</strong></div></div>`}
+    </article>
+
+    <aside class="match-side-stack">
+      <article class="panel"><div class="panel-head"><div><span class="eyebrow">Forma recente</span><h2>Ultime partite</h2></div></div><div class="team-form-row"><span>${esc(m.home_name)}</span><div>${formDots(teamForm.home)}</div></div><div class="team-form-row"><span>${esc(m.away_name)}</span><div>${formDots(teamForm.away)}</div></div></article>
+      ${m.highlights_url?`<a class="match-highlights" href="${esc(m.highlights_url)}" target="_blank" rel="noopener"><span>▶</span><div><small>VIDEO</small><strong>Guarda gli highlights</strong></div></a>`:''}
+      <article class="panel match-share"><span class="eyebrow">Condividi</span><h3>Porta la partita sui social</h3><button class="btn primary" id="share-match">Condividi la scheda</button></article>
+    </aside>
+  </section>
+
+  <section class="section"><div class="section-head"><div><span class="eyebrow">Altre gare</span><h2>Partite della giornata</h2></div><a href="#/partite">Calendario completo →</a></div><div class="grid two">${(d.related||[]).map(matchCard).join('')||'<div class="card empty">Nessun’altra partita disponibile.</div>'}</div></section>`,'partite');
+  const share=document.querySelector('#share-match');
+  if(share) share.onclick=async()=>{const data={title:`${m.home_name} - ${m.away_name}`,text:`Prime League: ${m.home_name} ${published?m.home_score+'-'+m.away_score:'vs'} ${m.away_name}`,url:location.href};if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(location.href);share.textContent='Link copiato';}};
+}
 async function table(){loading();const d=await api('public/standings');set(`<div class="section-head"><div><span class="eyebrow">Prime League</span><h2>Classifica</h2></div></div>${standingsTable(d.standings)}`,'classifica')}
 async function teams(){loading();const d=await api('public/teams');set(`<div class="section-head"><div><span class="eyebrow">Club</span><h2>Squadre</h2></div></div><div class="grid three">${d.teams.map(t=>`<a class="card team-card" href="#/squadra/${t.slug}">${logo(t.logo_url,t.name)}<div><h3>${esc(t.name)}</h3><div class="muted">${t.players_count} giocatori</div></div></a>`).join('')}</div>`,'squadre')}
 async function team(slug){loading();const d=await api(`public/team/${slug}`);set(`<section class="hero" style="padding:28px"><div class="team-card">${logo(d.team.logo_url,d.team.name)}<div><span class="eyebrow">Squadra</span><h1 style="font-size:clamp(2rem,5vw,4rem);margin:8px 0">${esc(d.team.name)}</h1><div class="muted">Allenatore: ${esc(d.team.coach_name||'—')} · Responsabile: ${esc(d.team.manager_name||'—')}</div></div></div></section>
@@ -165,5 +206,5 @@ async function manageNews(){const d=await api('admin/news');set(dashLayout(`<div
 async function managePolls(){const d=await api('admin/polls');set(dashLayout(`<div class="toolbar"><h2>Votazioni</h2><button class="btn primary" id="new-poll">Nuova votazione</button></div><div id="editor"></div><div class="grid two" style="margin-top:16px">${d.polls.map(p=>`<div class="card"><span class="pill">${esc(p.status)}</span><h3>${esc(p.title)}</h3><div class="muted">${p.options.length} opzioni · termina ${fmtDate(p.ends_at)}</div></div>`).join('')}</div>`,'polls'),'');bindLogout();document.querySelector('#new-poll').onclick=()=>showForm('editor',`<div class="card" style="margin-top:16px"><h3>Nuova votazione</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" required></div><div class="field"><label>Tipo</label><select class="input" name="poll_type"><option value="mvp">MVP</option><option value="goal">Gol</option><option value="save">Parata</option><option value="custom">Altro</option></select></div><div class="field"><label>Stato</label><select class="input" name="status"><option value="open">Aperta</option><option value="draft">Bozza</option><option value="closed">Chiusa</option></select></div><div class="field"><label>Inizio</label><input class="input" type="datetime-local" name="starts_at" required></div><div class="field"><label>Fine</label><input class="input" type="datetime-local" name="ends_at" required></div><div class="field full"><label>Opzioni, una per riga</label><textarea class="input" name="options_text" required></textarea></div><div class="field full"><button class="btn primary">Crea votazione</button></div></form></div>`,async f=>{f.options=f.options_text.split('\n').map(label=>({label:label.trim()})).filter(x=>x.label);delete f.options_text;await api('admin/polls',{method:'POST',body:JSON.stringify(f)});managePolls()})}
 
 async function loadUser(){try{state.user=(await api('me')).user}catch{state.user=null}}
-async function router(){const [route,...parts]=(location.hash.replace('#/','')||'home').split('/');try{if(route==='home')return home();if(route==='partite')return matches();if(route==='classifica')return table();if(route==='squadre')return teams();if(route==='squadra')return team(parts[0]);if(route==='giocatori')return players();if(route==='giocatore')return player(parts[0]);if(route==='statistiche')return stats();if(route==='vota')return polls();if(route==='news')return news();if(route==='login')return login();if(route==='registrazione')return register();if(route==='setup')return setup();if(route==='dashboard')return dashboard(parts[0]||'overview');return home()}catch(e){set(`<div class="card">${message(e.message,'error')}<div class="actions"><a class="btn" href="#/home">Torna alla home</a></div></div>`,'')}}
+async function router(){const [route,...parts]=(location.hash.replace('#/','')||'home').split('/');try{if(route==='home')return home();if(route==='partite')return matches();if(route==='partita')return matchDetail(parts[0]);if(route==='classifica')return table();if(route==='squadre')return teams();if(route==='squadra')return team(parts[0]);if(route==='giocatori')return players();if(route==='giocatore')return player(parts[0]);if(route==='statistiche')return stats();if(route==='vota')return polls();if(route==='news')return news();if(route==='login')return login();if(route==='registrazione')return register();if(route==='setup')return setup();if(route==='dashboard')return dashboard(parts[0]||'overview');return home()}catch(e){set(`<div class="card">${message(e.message,'error')}<div class="actions"><a class="btn" href="#/home">Torna alla home</a></div></div>`,'')}}
 window.addEventListener('hashchange',router);await loadUser();router();
