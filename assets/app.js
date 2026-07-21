@@ -385,6 +385,72 @@ async function dashboard(section='overview'){
   if(!state.user){location.hash='#/login';return} loading();
 
   if(section==='overview'){
+    const isLeagueAdmin=['super_admin','organizer'].includes(state.user.role);
+
+    if(!isLeagueAdmin){
+      const d=await api('dashboard');
+
+      if(!document.querySelector('link[data-prime-dashboard]')){
+        const link=document.createElement('link');
+        link.rel='stylesheet';
+        link.href='/assets/dashboard-admin.css';
+        link.dataset.primeDashboard='1';
+        document.head.appendChild(link);
+      }
+
+      if(state.user.role==='team_manager'){
+        const team=d.team||{};
+        const counts=d.counts||{};
+        set(dashLayout(`<div class="admin-page-head dashboard-admin-head">
+          <div><span class="eyebrow">Area squadra</span><h2>${esc(team.name||state.user.display_name)}</h2><p>Gestisci la tua rosa, le partite, gli sponsor e gli invii della squadra.</p></div>
+          <span class="dashboard-season-pill">Account squadra</span>
+        </div>
+
+        <section class="dashboard-kpis team-dashboard-kpis">
+          <a href="#/dashboard/players"><span>Giocatori attivi</span><b>${counts.players||0}</b><small>presenti nella rosa</small></a>
+          <a href="#/dashboard/matches"><span>Partite</span><b>→</b><small>calendario e risultati</small></a>
+          <a href="#/dashboard/sponsors"><span>Sponsor squadra</span><b>${counts.sponsors||0}</b><small>partner inseriti</small></a>
+          <a href="#/dashboard/matches" class="${Number(counts.pending||0)>0?'warning':''}"><span>Invii in attesa</span><b>${counts.pending||0}</b><small>referti inviati</small></a>
+        </section>
+
+        <section class="dashboard-panel dashboard-actions-panel">
+          <div class="dashboard-panel-head"><div><span>Gestione squadra</span><h3>Azioni rapide</h3></div></div>
+          <div class="dashboard-actions team-dashboard-actions">
+            <a href="#/dashboard/players"><span>◎</span><strong>Gestisci rosa</strong><small>Aggiungi e modifica i giocatori</small></a>
+            <a href="#/dashboard/matches"><span>⚽</span><strong>Partite</strong><small>Consulta calendario e risultati</small></a>
+            <a href="#/dashboard/sponsors"><span>★</span><strong>Sponsor</strong><small>Gestisci i partner della squadra</small></a>
+          </div>
+        </section>
+
+        <section class="dashboard-panel team-profile-panel">
+          <div class="dashboard-panel-head"><div><span>Profilo</span><h3>Dati della squadra</h3></div></div>
+          <div class="team-dashboard-profile">
+            ${logo(team.logo_url,team.name||'Squadra')}
+            <div><strong>${esc(team.name||'Squadra non collegata')}</strong><span>${esc(team.short_name||'')}</span><small>${esc(team.venue||team.city||'')}</small></div>
+          </div>
+        </section>`,section),'');
+        bindLogout();
+        return;
+      }
+
+      if(state.user.role==='referee'){
+        set(dashLayout(`<div class="admin-page-head dashboard-admin-head">
+          <div><span class="eyebrow">Area arbitro</span><h2>Ciao, ${esc(state.user.display_name)}</h2><p>Consulta le partite assegnate e compila i referti.</p></div>
+          <span class="dashboard-season-pill">Account arbitro</span>
+        </div>
+
+        <section class="dashboard-panel dashboard-actions-panel">
+          <div class="dashboard-panel-head"><div><span>Operazioni</span><h3>Le tue attività</h3></div></div>
+          <div class="dashboard-actions referee-dashboard-actions">
+            <a href="#/dashboard/matches"><span>⚽</span><strong>Partite assegnate</strong><small>Visualizza le gare da dirigere</small></a>
+            <a href="#/dashboard/matches"><span>✓</span><strong>Compila referto</strong><small>Inserisci risultato, eventi e MVP</small></a>
+          </div>
+        </section>`,section),'');
+        bindLogout();
+        return;
+      }
+    }
+
     const d=await api('admin/dashboard');
 
     if(!document.querySelector('link[data-prime-dashboard]')){
