@@ -314,12 +314,61 @@ async function route(request, env, path) {
     return json({match,events:events.results,related:related.results,team_form:{home:homeForm,away:awayForm}});
   }
   if (path === 'public/stats') {
-    const scorers = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const assists = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.assist_player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' AND e.assist_player_id IS NOT NULL GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const mvps = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,COUNT(*) value FROM matches m JOIN players p ON p.id=m.mvp_player_id JOIN teams t ON t.id=p.team_id WHERE m.status='published' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const yellows = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='yellow' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    const reds = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='red' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
-    return json({scorers:scorers.results,assists:assists.results,mvps:mvps.results,yellows:yellows.results,reds:reds.results});
+    const params = new URL(request.url).searchParams;
+    const requestedSeason = params.get('season');
+    const teamId = Number(params.get('team') || 0);
+    const allowedRoles = ['Portiere','Difensore','Centrocampista','Attaccante'];
+    const role = allowedRoles.includes(params.get('role')) ? params.get('role') : '';
+    const tableData = await standings(env, requestedSeason ? Number(requestedSeason) : null);
+    const selected = tableData.selectedSeason;
+    if (!selected) return json({seasons:tableData.seasons,selectedSeason:null,overview:{},scorers:[],assists:[],mvps:[],yellows:[],reds:[],teams:[],roundGoals:[]});
+
+    const playerWhere = `${teamId ? ' AND p.team_id='+teamId : ''}${role ? " AND p.role='"+role+"'" : ''}`;
+    const leaderboard = async (kind) => {
+      let joinField = 'e.player_id', eventFilter = "e.event_type='goal'", valueExpr = 'SUM(e.quantity)';
+      if (kind === 'assists') joinField = 'e.assist_player_id';
+      if (kind === 'yellow') eventFilter = "e.event_type='yellow'";
+      if (kind === 'red') eventFilter = "e.event_type='red'";
+      if (kind === 'mvp') {
+        return (await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,p.role,t.id team_id,t.name team_name,t.logo_url team_logo,COUNT(m.id) value
+          FROM matches m JOIN players p ON p.id=m.mvp_player_id JOIN teams t ON t.id=p.team_id
+          WHERE m.status='published' AND m.season_id=? ${playerWhere}
+          GROUP BY p.id ORDER BY value DESC,p.last_name,p.first_name LIMIT 100`).bind(selected.id).all()).results;
+      }
+      return (await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,p.role,t.id team_id,t.name team_name,t.logo_url team_logo,${valueExpr} value
+        FROM match_events e JOIN matches m ON m.id=e.match_id JOIN players p ON p.id=${joinField} JOIN teams t ON t.id=p.team_id
+        WHERE m.status='published' AND m.season_id=? AND ${eventFilter} ${kind==='assists'?'AND e.assist_player_id IS NOT NULL':''} ${playerWhere}
+        GROUP BY p.id ORDER BY value DESC,p.last_name,p.first_name LIMIT 100`).bind(selected.id).all()).results;
+    };
+
+    const [scorers,assists,mvps,yellows,reds,overviewRow,roundRows,teamRows] = await Promise.all([
+      leaderboard('scorers'), leaderboard('assists'), leaderboard('mvp'), leaderboard('yellow'), leaderboard('red'),
+      env.DB.prepare(`SELECT COUNT(*) matches_played,COALESCE(SUM(home_score+away_score),0) total_goals,
+        COALESCE(MAX(home_score+away_score),0) max_goals_match,
+        COUNT(DISTINCT home_team_id)+COUNT(DISTINCT away_team_id) raw_team_count
+        FROM matches WHERE status='published' AND season_id=?`).bind(selected.id).first(),
+      env.DB.prepare(`SELECT COALESCE(round_name,'Giornata') round_name,COUNT(*) matches_played,COALESCE(SUM(home_score+away_score),0) goals,MIN(match_date) first_date
+        FROM matches WHERE status='published' AND season_id=? GROUP BY COALESCE(round_name,'Giornata') ORDER BY first_date,id`).bind(selected.id).all(),
+      env.DB.prepare(`SELECT DISTINCT t.id,t.name,t.slug,t.logo_url FROM teams t
+        JOIN matches m ON (m.home_team_id=t.id OR m.away_team_id=t.id) WHERE m.season_id=? ORDER BY t.name`).bind(selected.id).all()
+    ]);
+
+    const publishedMatches = Number(overviewRow?.matches_played || 0);
+    const totalGoals = Number(overviewRow?.total_goals || 0);
+    const totalYellows = yellows.reduce((n,r)=>n+Number(r.value||0),0);
+    const totalReds = reds.reduce((n,r)=>n+Number(r.value||0),0);
+    const standingsRows = tableData.standings.map((t,index)=>({...t,position:index+1}));
+    const filteredTeams = teamId ? standingsRows.filter(t=>Number(t.id)===teamId) : standingsRows;
+    const byAttack=[...filteredTeams].sort((a,b)=>b.gf-a.gf || b.points-a.points);
+    const byDefense=[...filteredTeams].sort((a,b)=>a.ga-b.ga || b.points-a.points);
+    const byWins=[...filteredTeams].sort((a,b)=>b.won-a.won || b.points-a.points);
+    return json({
+      seasons:tableData.seasons,selectedSeason:selected,teams:teamRows.results,
+      overview:{matches:publishedMatches,goals:totalGoals,goals_per_match:publishedMatches?(totalGoals/publishedMatches):0,yellows:totalYellows,reds:totalReds,teams:standingsRows.length},
+      scorers,assists,mvps,yellows,reds,
+      teamRankings:{attack:byAttack,defense:byDefense,wins:byWins},
+      roundGoals:roundRows.results
+    });
   }
   if (path === 'public/news') {
     const rows = await env.DB.prepare('SELECT * FROM news WHERE is_published=1 ORDER BY published_at DESC').all();
