@@ -157,57 +157,70 @@ async function route(request, env, path) {
     const mvps = await env.DB.prepare('SELECT COUNT(*) mvps FROM matches WHERE mvp_player_id=? AND status=\'published\'').bind(player.id).first();
     return json({player,stats:{...stats,...assists,...appearances,...mvps}});
   }
+  if (path === 'public/matches') {
+    const rows = await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,at.name away_name,at.slug away_slug,at.logo_url away_logo,p.first_name mvp_first,p.last_name mvp_last FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN players p ON p.id=m.mvp_player_id ORDER BY m.match_date DESC`).all();
+    return json({matches:rows.results});
+  }
   if (path.match(/^public\/match\/\d+$/)) {
-    const id = Number(path.split('/').pop());
-    const match = await env.DB.prepare(`SELECT m.*,
-      ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,
-      at.name away_name,at.slug away_slug,at.logo_url away_logo,
-      p.id mvp_player_id,p.slug mvp_slug,p.photo_url mvp_photo,
-      TRIM(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')) mvp_name,
-      mt.name mvp_team_name
+    const matchId = Number(path.split('/').pop());
+    const match = await env.DB.prepare(`
+      SELECT m.*,
+        ht.name home_name, ht.slug home_slug, ht.logo_url home_logo,
+        at.name away_name, at.slug away_slug, at.logo_url away_logo,
+        p.id mvp_player_id, p.slug mvp_slug, p.photo_url mvp_photo,
+        TRIM(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')) mvp_name,
+        mt.name mvp_team_name
       FROM matches m
       JOIN teams ht ON ht.id=m.home_team_id
       JOIN teams at ON at.id=m.away_team_id
       LEFT JOIN players p ON p.id=m.mvp_player_id
       LEFT JOIN teams mt ON mt.id=p.team_id
-      WHERE m.id=?`).bind(id).first();
+      WHERE m.id=?
+    `).bind(matchId).first();
     if (!match) return json({error:'Partita non trovata'},404);
 
-    const events = await env.DB.prepare(`SELECT e.*,
-      TRIM(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')) player_name,
-      p.slug player_slug,
-      TRIM(COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')) assist_name,
-      a.slug assist_slug
+    const events = await env.DB.prepare(`
+      SELECT e.id,e.match_id,e.team_id,e.player_id,e.assist_player_id,e.event_type,e.quantity,
+        TRIM(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')) player_name,
+        p.slug player_slug,p.photo_url player_photo,
+        TRIM(COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')) assist_name,
+        a.slug assist_slug,a.photo_url assist_photo,
+        t.name team_name,t.slug team_slug,t.logo_url team_logo
       FROM match_events e
+      JOIN teams t ON t.id=e.team_id
       LEFT JOIN players p ON p.id=e.player_id
       LEFT JOIN players a ON a.id=e.assist_player_id
       WHERE e.match_id=?
-      ORDER BY CASE e.event_type WHEN 'goal' THEN 1 WHEN 'yellow' THEN 2 WHEN 'red' THEN 3 ELSE 4 END,e.id`)
-      .bind(id).all();
+      ORDER BY CASE e.event_type WHEN 'goal' THEN 1 WHEN 'yellow' THEN 2 WHEN 'red' THEN 3 ELSE 4 END,e.id
+    `).bind(matchId).all();
 
-    const related = await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,
-      at.name away_name,at.slug away_slug,at.logo_url away_logo
-      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
-      WHERE m.id<>? AND m.round_name=?
-      ORDER BY m.match_date LIMIT 4`).bind(id,match.round_name||'').all();
+    const related = await env.DB.prepare(`
+      SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,
+        at.name away_name,at.slug away_slug,at.logo_url away_logo
+      FROM matches m
+      JOIN teams ht ON ht.id=m.home_team_id
+      JOIN teams at ON at.id=m.away_team_id
+      WHERE m.id<>? AND m.season_id=? AND COALESCE(m.round_name,'')=COALESCE(?,'')
+      ORDER BY m.match_date
+      LIMIT 4
+    `).bind(matchId,match.season_id,match.round_name||'').all();
 
-    async function recentForm(teamId) {
-      const rows = await env.DB.prepare(`SELECT home_team_id,away_team_id,home_score,away_score
-        FROM matches WHERE status='published' AND match_date<=? AND (home_team_id=? OR away_team_id=?)
-        ORDER BY match_date DESC LIMIT 5`).bind(match.match_date,teamId,teamId).all();
+    async function recentForm(teamId){
+      const rows = await env.DB.prepare(`
+        SELECT home_team_id,away_team_id,home_score,away_score
+        FROM matches
+        WHERE status='published' AND id<>? AND (home_team_id=? OR away_team_id=?)
+        ORDER BY match_date DESC LIMIT 5
+      `).bind(matchId,teamId,teamId).all();
       return rows.results.map(r=>{
-        const home=r.home_team_id===teamId;
-        const gf=home?r.home_score:r.away_score, ga=home?r.away_score:r.home_score;
+        const home=Number(r.home_team_id)===Number(teamId);
+        const gf=Number(home?r.home_score:r.away_score);
+        const ga=Number(home?r.away_score:r.home_score);
         return gf>ga?'w':gf<ga?'l':'d';
       });
     }
-    const [homeForm,awayForm] = await Promise.all([recentForm(match.home_team_id),recentForm(match.away_team_id)]);
+    const [homeForm,awayForm]=await Promise.all([recentForm(match.home_team_id),recentForm(match.away_team_id)]);
     return json({match,events:events.results,related:related.results,team_form:{home:homeForm,away:awayForm}});
-  }
-
-  if (path === 'public/matches') {
-    const rows = await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.slug home_slug,ht.logo_url home_logo,at.name away_name,at.slug away_slug,at.logo_url away_logo,p.first_name mvp_first,p.last_name mvp_last FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN players p ON p.id=m.mvp_player_id ORDER BY m.match_date DESC`).all();
-    return json({matches:rows.results});
   }
   if (path === 'public/stats') {
     const scorers = await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,t.logo_url team_logo,SUM(e.quantity) value FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=p.team_id WHERE e.event_type='goal' GROUP BY p.id ORDER BY value DESC,p.last_name LIMIT 30`).all();
