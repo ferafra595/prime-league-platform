@@ -341,14 +341,85 @@ async function adminTeams(){
 function teamForm(t={}){return `<div class="admin-editor-card"><h3>${t.id?'Modifica squadra':'Nuova squadra'}</h3><form class="form-grid data-form"><div class="field"><label>Nome</label><input class="input" name="name" value="${esc(t.name||'')}" required></div><div class="field"><label>Sigla</label><input class="input" name="short_name" value="${esc(t.short_name||'')}"></div><div class="field"><label>Responsabile</label><input class="input" name="manager_name" value="${esc(t.manager_name||'')}"></div><div class="field"><label>Allenatore</label><input class="input" name="coach_name" value="${esc(t.coach_name||'')}"></div><div class="field"><label>Colore principale</label><input class="input" type="color" name="primary_color" value="${esc(t.primary_color||'#081a36')}"></div><div class="field"><label>Colore secondario</label><input class="input" type="color" name="secondary_color" value="${esc(t.secondary_color||'#ffffff')}"></div><div class="field full"><label>URL logo</label><input class="input" name="logo_url" value="${esc(t.logo_url||'')}"></div><div class="field full"><label>Descrizione</label><textarea class="input" name="description">${esc(t.description||'')}</textarea></div>${t.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${t.is_active?'checked':''}> Squadra attiva</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${t.id?'Salva modifiche':'Crea squadra'}</button></div></form></div>`}
 function showForm(id,html,handler){document.querySelector('#'+id).innerHTML=html;const form=document.querySelector('#'+id+' form');if(!form)return;form.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await handler(data,e.target)}catch(err){alert(err.message)}}}
 async function managePlayers(){
-  await loadTeams(); const endpoint=['super_admin','organizer'].includes(state.user.role)?'admin/players':'team/players'; const d=await api(endpoint); const isAdmin=['super_admin','organizer'].includes(state.user.role);
-  const rows=d.players.map(p=>`<tr><td><b>${esc(p.first_name)} ${esc(p.last_name)}</b></td><td>${esc(p.team_name)}</td><td>${p.shirt_number||'—'}</td><td>${esc(p.role)}</td><td>${p.is_active?'Attivo':'Disattivo'}</td><td><div class="admin-row-actions"><button class="btn small edit-player" data-id="${p.id}">Modifica</button>${isAdmin?`<button class="btn small danger delete-player" data-id="${p.id}">Elimina</button>`:''}</div></td></tr>`).join('');
-  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>${isAdmin?'Giocatori':'Rosa'}</h2><p>Inserisci, trasferisci, modifica o elimina i giocatori.</p></div><button class="btn primary" id="new-player">Nuovo giocatore</button></div><div id="editor"></div><div class="admin-table-card"><table class="table"><thead><tr><th>Giocatore</th><th>Squadra</th><th>Numero</th><th>Ruolo</th><th>Stato</th><th>Azioni</th></tr></thead><tbody>${rows||'<tr><td colspan="6">Nessun giocatore.</td></tr>'}</tbody></table></div>`,'players'),'');bindLogout();
-  const form=(p={})=>`<div class="admin-editor-card"><h3>${p.id?'Modifica giocatore':'Nuovo giocatore'}</h3><form class="form-grid data-form">${isAdmin?`<div class="field"><label>Squadra</label><select class="input" name="team_id" required>${state.teams.map(t=>`<option value="${t.id}" ${Number(p.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>`:''}<div class="field"><label>Nome</label><input class="input" name="first_name" value="${esc(p.first_name||'')}" required></div><div class="field"><label>Cognome</label><input class="input" name="last_name" value="${esc(p.last_name||'')}" required></div><div class="field"><label>Numero</label><input class="input" type="number" name="shirt_number" value="${p.shirt_number||''}"></div><div class="field"><label>Ruolo</label><select class="input" name="role">${['Portiere','Difensore','Centrocampista','Attaccante'].map(x=>`<option ${p.role===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field full"><label>URL foto</label><input class="input" name="photo_url" value="${esc(p.photo_url||'')}"></div>${p.id?`<div class="field full"><label class="admin-check"><input type="checkbox" name="is_active" value="1" ${p.is_active?'checked':''}> Giocatore attivo</label></div>`:'<input type="hidden" name="is_active" value="1">'}<div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Salva giocatore'}</button></div></form></div>`;
-  const open=(p={})=>showForm('editor',form(p),async f=>{f.is_active=f.is_active==='1'?1:0;await api(p.id?`${endpoint}/${p.id}`:endpoint,{method:p.id?'PUT':'POST',body:JSON.stringify(f)});managePlayers()});
-  document.querySelector('#new-player').onclick=()=>open(); document.querySelectorAll('.edit-player').forEach(b=>b.onclick=()=>open(d.players.find(x=>Number(x.id)===Number(b.dataset.id)))); document.querySelectorAll('.delete-player').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare definitivamente questo giocatore?')){await api(`admin/players/${b.dataset.id}?hard=1`,{method:'DELETE'});managePlayers()}})
-}
+  await loadTeams();
+  const endpoint=['super_admin','organizer'].includes(state.user.role)?'admin/players':'team/players';
+  const d=await api(endpoint);
+  const isAdmin=['super_admin','organizer'].includes(state.user.role);
+  const players=[...(d.players||[])].sort((a,b)=>(a.team_name||'').localeCompare(b.team_name||'')||(a.last_name||'').localeCompare(b.last_name||'')||(a.first_name||'').localeCompare(b.first_name||''));
+  const teams=d.teams||state.teams||[];
+  const roles=[...new Set(players.map(p=>p.role).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const activeCount=players.filter(p=>Number(p.is_active)!==0).length;
 
+  if(!document.querySelector('link[data-prime-players]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/players-admin.css';
+    link.dataset.primePlayers='1';
+    document.head.appendChild(link);
+  }
+
+  const rows=players.map(p=>`<tr class="player-row"
+    data-search="${esc(`${p.first_name||''} ${p.last_name||''} ${p.team_name||''} ${p.role||''} ${p.shirt_number||''}`.toLowerCase())}"
+    data-team="${p.team_id||''}" data-role="${esc(p.role||'')}"
+    data-status="${Number(p.is_active)!==0?'active':'inactive'}"
+    data-name="${esc(`${p.last_name||''} ${p.first_name||''}`.toLowerCase())}"
+    data-number="${Number(p.shirt_number||999)}">
+    <td><div class="player-admin-identity">${p.photo_url?`<img src="${esc(p.photo_url)}" alt="${esc(p.first_name+' '+p.last_name)}">`:`<div class="player-admin-avatar">${esc(initials(`${p.first_name||''} ${p.last_name||''}`))}</div>`}<div><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong><small>${esc(p.slug||'')}</small></div></div></td>
+    <td>${esc(p.team_name||'Senza squadra')}</td>
+    <td><span class="player-number">${p.shirt_number??'—'}</span></td>
+    <td><span class="player-role">${esc(p.role||'Non definito')}</span></td>
+    <td><span class="player-status ${Number(p.is_active)!==0?'active':'inactive'}">${Number(p.is_active)!==0?'Attivo':'Non attivo'}</span></td>
+    <td><div class="player-actions"><button class="btn small edit-player" data-id="${p.id}">Modifica</button>${isAdmin?`<button class="btn small danger delete-player" data-id="${p.id}">Elimina</button>`:''}</div></td>
+  </tr>`).join('');
+
+  set(dashLayout(`<div class="admin-page-head players-admin-head"><div><span class="eyebrow">Gestione completa</span><h2>${isAdmin?'Giocatori':'Rosa'}</h2><p>Inserisci, trasferisci, modifica o elimina i giocatori.</p></div><button class="btn primary" id="new-player">Nuovo giocatore</button></div>
+    <div id="editor"></div>
+    <section class="players-admin-summary">
+      <div><span>Giocatori totali</span><b>${players.length}</b></div>
+      <div><span>Attivi</span><b>${activeCount}</b></div>
+      <div><span>Non attivi</span><b>${players.length-activeCount}</b></div>
+      <div><span>Squadre</span><b>${teams.length}</b></div>
+    </section>
+    <section class="players-admin-filters">
+      <div class="field search-field"><label>Cerca</label><input class="input" id="players-search" placeholder="Nome, squadra, ruolo o numero"></div>
+      <div class="field"><label>Squadra</label><select class="input" id="players-team"><option value="">Tutte</option>${teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Ruolo</label><select class="input" id="players-role"><option value="">Tutti</option>${roles.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>
+      <div class="field"><label>Stato</label><select class="input" id="players-status"><option value="">Tutti</option><option value="active">Attivi</option><option value="inactive">Non attivi</option></select></div>
+      <div class="field"><label>Ordina</label><select class="input" id="players-sort"><option value="team">Squadra</option><option value="name">Nome</option><option value="number">Numero</option><option value="role">Ruolo</option></select></div>
+      <button type="button" class="btn small" id="players-reset">Azzera</button>
+    </section>
+    <div class="players-results-bar"><span id="players-result-count">${players.length} giocatori</span><span>Gestione riservata</span></div>
+    <section class="admin-table-card players-table-card"><div class="table-wrap"><table class="admin-table players-table"><thead><tr><th>Giocatore</th><th>Squadra</th><th>Numero</th><th>Ruolo</th><th>Stato</th><th>Azioni</th></tr></thead><tbody id="players-table-body">${rows}</tbody></table></div><div class="players-empty" id="players-empty" hidden>Nessun giocatore corrisponde ai filtri.</div></section>`,'players'),'');
+  bindLogout();
+
+  const findPlayer=id=>players.find(p=>Number(p.id)===Number(id));
+  const openForm=(p={})=>showForm('editor',`<div class="admin-editor-card"><h3>${p.id?'Modifica giocatore':'Nuovo giocatore'}</h3><form class="form-grid"><div class="field"><label>Nome</label><input class="input" name="first_name" value="${esc(p.first_name||'')}" required></div><div class="field"><label>Cognome</label><input class="input" name="last_name" value="${esc(p.last_name||'')}" required></div><div class="field"><label>Squadra</label><select class="input" name="team_id">${teams.map(t=>`<option value="${t.id}" ${Number(p.team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Numero</label><input class="input" type="number" name="shirt_number" value="${p.shirt_number??''}"></div><div class="field"><label>Ruolo</label><select class="input" name="role">${['Portiere','Difensore','Centrocampista','Attaccante'].map(r=>`<option value="${r}" ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></div><div class="field"><label>Stato</label><select class="input" name="is_active"><option value="1" ${Number(p.is_active)!==0?'selected':''}>Attivo</option><option value="0" ${Number(p.is_active)===0?'selected':''}>Non attivo</option></select></div><div class="field full"><label>URL foto</label><input class="input" name="photo_url" value="${esc(p.photo_url||'')}"></div><div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Crea giocatore'}</button></div></form></div>`,async f=>{await api(p.id?`admin/players/${p.id}`:'admin/players',{method:p.id?'PUT':'POST',body:JSON.stringify(f)});managePlayers()});
+
+  const allRows=[...document.querySelectorAll('.player-row')];
+  const apply=()=>{
+    const search=document.querySelector('#players-search').value.toLowerCase().trim();
+    const team=document.querySelector('#players-team').value;
+    const role=document.querySelector('#players-role').value;
+    const status=document.querySelector('#players-status').value;
+    const sort=document.querySelector('#players-sort').value;
+    const visible=allRows.filter(r=>{
+      const show=(!search||r.dataset.search.includes(search))&&(!team||r.dataset.team===team)&&(!role||r.dataset.role===role)&&(!status||r.dataset.status===status);
+      r.hidden=!show; return show;
+    });
+    visible.sort((a,b)=>sort==='name'?a.dataset.name.localeCompare(b.dataset.name):sort==='number'?Number(a.dataset.number)-Number(b.dataset.number):sort==='role'?a.dataset.role.localeCompare(b.dataset.role):((findPlayer(a.querySelector('.edit-player').dataset.id)?.team_name||'').localeCompare(findPlayer(b.querySelector('.edit-player').dataset.id)?.team_name||'')||a.dataset.name.localeCompare(b.dataset.name)));
+    const tbody=document.querySelector('#players-table-body'); visible.forEach(r=>tbody.appendChild(r)); allRows.filter(r=>r.hidden).forEach(r=>tbody.appendChild(r));
+    document.querySelector('#players-result-count').textContent=`${visible.length} ${visible.length===1?'giocatore':'giocatori'}`;
+    document.querySelector('#players-empty').hidden=visible.length>0;
+    document.querySelector('.players-table').hidden=visible.length===0;
+  };
+
+  ['players-search','players-team','players-role','players-status','players-sort'].forEach(id=>document.querySelector('#'+id).addEventListener(id==='players-search'?'input':'change',apply));
+  document.querySelector('#players-reset').onclick=()=>{['players-search','players-team','players-role','players-status'].forEach(id=>document.querySelector('#'+id).value='');document.querySelector('#players-sort').value='team';apply()};
+  document.querySelector('#new-player').onclick=()=>openForm();
+  document.querySelectorAll('.edit-player').forEach(btn=>btn.onclick=()=>openForm(findPlayer(btn.dataset.id)));
+  document.querySelectorAll('.delete-player').forEach(btn=>btn.onclick=async()=>{if(confirm('Eliminare definitivamente questo giocatore?')){await api(`admin/players/${btn.dataset.id}`,{method:'DELETE'});managePlayers()}});
+  apply();
+}
 async function manageCalendar(){
   await loadTeams();
   const isAdmin=['super_admin','organizer'].includes(state.user.role);
