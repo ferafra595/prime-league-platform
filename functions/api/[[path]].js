@@ -119,6 +119,19 @@ async function ensureAuthSchema(env) {
       details TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS match_lineups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      match_id INTEGER NOT NULL,
+      team_id INTEGER NOT NULL,
+      player_id INTEGER NOT NULL,
+      is_called INTEGER NOT NULL DEFAULT 1,
+      lineup_role TEXT NOT NULL DEFAULT 'reserve',
+      played INTEGER NOT NULL DEFAULT 0,
+      source_submission_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(match_id,team_id,player_id)
+    )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_profile_details (
       team_id INTEGER PRIMARY KEY,
       city TEXT,
@@ -239,20 +252,7 @@ async function standings(env, requestedSeasonId = null) {
 
 async function publicDashboard(env) {
   const [next, recent, top, newsRows, sponsors] = await Promise.all([
-    env.DB.prepare(`SELECT m.*,
-      ht.name home_name,ht.logo_url home_logo,
-      at.name away_name,at.logo_url away_logo
-      FROM matches m
-      JOIN teams ht ON ht.id=m.home_team_id
-      JOIN teams at ON at.id=m.away_team_id
-      WHERE m.status NOT IN ('published','cancelled')
-        AND datetime(m.match_date) >= datetime('now')
-        AND (
-          m.season_id=(SELECT id FROM seasons WHERE is_current=1 ORDER BY id DESC LIMIT 1)
-          OR NOT EXISTS(SELECT 1 FROM seasons WHERE is_current=1)
-        )
-      ORDER BY datetime(m.match_date) ASC,m.id ASC
-      LIMIT 5`).all(),
+    env.DB.prepare(`SELECT m.*, ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.status='scheduled' ORDER BY m.match_date LIMIT 4`).all(),
     env.DB.prepare(`SELECT m.*, ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id WHERE m.status='published' ORDER BY m.match_date DESC LIMIT 4`).all(),
     env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.slug,p.photo_url,t.name team_name,COALESCE(SUM(e.quantity),0) goals FROM players p JOIN teams t ON t.id=p.team_id LEFT JOIN match_events e ON e.player_id=p.id AND e.event_type='goal' GROUP BY p.id ORDER BY goals DESC,p.last_name LIMIT 5`).all(),
     env.DB.prepare(`SELECT id,title,slug,excerpt,cover_url,published_at FROM news WHERE is_published=1 ORDER BY published_at DESC LIMIT 3`).all(),
@@ -409,11 +409,7 @@ async function route(request, env, path) {
     } catch { return json({error:'Email già registrata'},409); }
   }
 
-  if (path === 'public/home') {
-    const response=json(await publicDashboard(env));
-    response.headers.set('cache-control','no-store, no-cache, must-revalidate');
-    return response;
-  }
+  if (path === 'public/home') return json(await publicDashboard(env));
   if (path === 'public/standings') {
     const seasonId = new URL(request.url).searchParams.get('season');
     return json(await standings(env, seasonId ? Number(seasonId) : null));
@@ -595,6 +591,27 @@ async function route(request, env, path) {
     const [homeForm,awayForm]=await Promise.all([recentForm(match.home_team_id),recentForm(match.away_team_id)]);
     return json({match,events:events.results,related:related.results,team_form:{home:homeForm,away:awayForm}});
   }
+  if (path === 'public/player-appearances') {
+    const seasonId=new URL(request.url).searchParams.get('season');
+    const seasonFilter=seasonId?'AND m.season_id=?':'';
+    const params=seasonId?[Number(seasonId)]:[];
+    const rows=await env.DB.prepare(`SELECT
+      p.id,p.first_name,p.last_name,p.slug,p.photo_url,p.shirt_number,p.role,
+      t.name team_name,t.logo_url team_logo,
+      COALESCE(SUM(CASE WHEN ml.is_called=1 THEN 1 ELSE 0 END),0) callups,
+      COALESCE(SUM(CASE WHEN ml.played=1 THEN 1 ELSE 0 END),0) appearances,
+      COALESCE(SUM(CASE WHEN ml.played=1 AND ml.lineup_role='starter' THEN 1 ELSE 0 END),0) starts,
+      COALESCE(SUM(CASE WHEN ml.played=1 AND ml.lineup_role='reserve' THEN 1 ELSE 0 END),0) substitute_appearances,
+      COALESCE(SUM(CASE WHEN ml.played=0 AND ml.lineup_role='reserve' AND ml.is_called=1 THEN 1 ELSE 0 END),0) unused_bench
+      FROM players p
+      JOIN teams t ON t.id=p.team_id
+      LEFT JOIN match_lineups ml ON ml.player_id=p.id
+      LEFT JOIN matches m ON m.id=ml.match_id ${seasonFilter}
+      GROUP BY p.id
+      ORDER BY appearances DESC,starts DESC,p.last_name`).bind(...params).all();
+    return json({players:rows.results});
+  }
+
   if (path === 'public/stats') {
     const params = new URL(request.url).searchParams;
     const requestedSeason = params.get('season');
@@ -882,18 +899,20 @@ async function route(request, env, path) {
         (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
         (SELECT s.away_score FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_away_score,
         (SELECT s.events_json FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_events_json,
-        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note
-        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`).bind(user.id,user.id,user.id,user.id,user.id)
+        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note,
+        (SELECT json_extract(s.notes,'$.lineup') FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_lineup_json
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`).bind(user.id,user.id,user.id,user.id,user.id,user.id)
       : env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
         (SELECT s.status FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_status,
         (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
         (SELECT s.away_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_away_score,
         (SELECT s.events_json FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_events_json,
         (SELECT s.notes FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_notes,
-        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note
+        (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note,
+        (SELECT json_extract(s.notes,'$.lineup') FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_lineup_json
         FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
         WHERE m.home_team_id=? OR m.away_team_id=? ORDER BY m.match_date DESC`)
-        .bind(user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id);
+        .bind(user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id,user.team_id);
     const rows=await q.all(); return json({matches:rows.results});
   }
   if (path.match(/^referee\/matches\/\d+\/report-data$/) && method==='GET') {
@@ -913,7 +932,18 @@ async function route(request, env, path) {
     if(!match)return json({error:'Partita non valida'},400);
     const submissionTeamId=hasRole(user,'referee')?match.home_team_id:user.team_id;
     await env.DB.prepare("UPDATE match_submissions SET status='superseded' WHERE match_id=? AND submitted_by_user_id=? AND status IN ('pending','rejected')").bind(match.id,user.id).run();
-    const notesPayload=JSON.stringify({text:d.notes||'',mvp_player_id:d.mvp_player_id?Number(d.mvp_player_id):null});
+    const normalizedLineup=Array.isArray(d.lineup)?d.lineup.map(x=>({
+      team_id:Number(x.team_id),
+      player_id:Number(x.player_id),
+      is_called:x.is_called===false?0:1,
+      lineup_role:x.lineup_role==='starter'?'starter':'reserve',
+      played:x.played?1:0
+    })).filter(x=>x.team_id&&x.player_id):[];
+    const notesPayload=JSON.stringify({
+      text:d.notes||'',
+      mvp_player_id:d.mvp_player_id?Number(d.mvp_player_id):null,
+      lineup:normalizedLineup
+    });
     const result=await env.DB.prepare('INSERT INTO match_submissions(match_id,submitted_by_user_id,team_id,home_score,away_score,events_json,notes) VALUES(?,?,?,?,?,?,?)').bind(match.id,user.id,submissionTeamId,Number(d.home_score),Number(d.away_score),JSON.stringify(d.events||[]),notesPayload).run();
     await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201);
   }
@@ -1043,6 +1073,18 @@ async function route(request, env, path) {
     return json({match,submissions:rows.results.map(x=>({...x,source_role:ROLE_ALIASES[x.source_role]||x.source_role}))});
   }
 
+  if (path.match(/^admin\/matches\/\d+\/official-lineup$/) && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const matchId=Number(path.split('/')[2]);
+    const rows=await env.DB.prepare(`SELECT ml.*,p.first_name,p.last_name,p.shirt_number,p.role,t.name team_name
+      FROM match_lineups ml
+      JOIN players p ON p.id=ml.player_id
+      JOIN teams t ON t.id=ml.team_id
+      WHERE ml.match_id=?
+      ORDER BY ml.team_id,CASE ml.lineup_role WHEN 'starter' THEN 0 ELSE 1 END,p.shirt_number,p.last_name`).bind(matchId).all();
+    return json({lineup:rows.results});
+  }
+
   if (path === 'admin/submissions') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const rows=await env.DB.prepare(`SELECT s.*,t.name team_name,m.round_name,ht.name home_name,at.name away_name,u.display_name submitted_by FROM match_submissions s JOIN teams t ON t.id=s.team_id JOIN users u ON u.id=s.submitted_by_user_id JOIN matches m ON m.id=s.match_id JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END,s.created_at DESC`).all(); return json({submissions:rows.results});
   }
@@ -1089,6 +1131,35 @@ async function route(request, env, path) {
       });
       const officialMvp=[...mvpVotes.values()].sort((a,b)=>b.count-a.count||b.lastIndex-a.lastIndex)[0]?.playerId||null;
 
+      // LINEUP / DISTINTA:
+      // same player across multiple reports is not duplicated.
+      // called/played use OR logic; starter prevails over reserve.
+      const lineupMap=new Map();
+      for(const sub of approved){
+        let meta={};
+        try{meta=JSON.parse(sub.notes||'{}')||{}}catch{meta={}}
+        const rows=Array.isArray(meta.lineup)?meta.lineup:[];
+        for(const row of rows){
+          const teamId=Number(row.team_id);
+          const playerId=Number(row.player_id);
+          if(!teamId||!playerId)continue;
+          const key=`${teamId}:${playerId}`;
+          const current=lineupMap.get(key)||{
+            team_id:teamId,
+            player_id:playerId,
+            is_called:0,
+            lineup_role:'reserve',
+            played:0,
+            source_submission_id:sub.id
+          };
+          current.is_called=Math.max(current.is_called,row.is_called===false?0:1);
+          if(row.lineup_role==='starter')current.lineup_role='starter';
+          current.played=Math.max(current.played,row.played?1:0);
+          current.source_submission_id=sub.id;
+          lineupMap.set(key,current);
+        }
+      }
+
       // EVENTS:
       // Identical reports are not cumulative.
       // A unique event is identified by team + player + event type.
@@ -1125,6 +1196,14 @@ async function route(request, env, path) {
         .bind(s.match_id).run();
 
       await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(s.match_id).run();
+      await env.DB.prepare('DELETE FROM match_lineups WHERE match_id=?').bind(s.match_id).run();
+
+      for(const row of lineupMap.values()){
+        await env.DB.prepare(`INSERT INTO match_lineups
+          (match_id,team_id,player_id,is_called,lineup_role,played,source_submission_id,updated_at)
+          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+          .bind(s.match_id,row.team_id,row.player_id,row.is_called,row.lineup_role,row.played,row.source_submission_id).run();
+      }
 
       const officialEvents=[...eventMap.values()];
       const teamIds=[...new Set(officialEvents.map(e=>e.team_id))];
