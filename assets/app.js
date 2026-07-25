@@ -488,16 +488,34 @@ async function dashboard(section='overview'){
       }
 
       if(state.user.role==='referee'){
+        const rd=await api('referee/dashboard');
+        const counts=rd.counts||{};
+        const next=rd.next_match;
         set(dashLayout(`<div class="admin-page-head dashboard-admin-head">
-          <div><span class="eyebrow">Area arbitro</span><h2>Ciao, ${esc(state.user.display_name)}</h2><p>Consulta le partite assegnate e compila i referti.</p></div>
+          <div><span class="eyebrow">Area arbitro</span><h2>Ciao, ${esc(state.user.display_name)}</h2><p>Consulta le gare assegnate e gestisci i referti arbitrali.</p></div>
           <span class="dashboard-season-pill">Account arbitro</span>
         </div>
 
+        <section class="dashboard-kpis referee-kpis">
+          <a href="#/dashboard/matches"><span>Gare assegnate</span><b>${counts.assigned||0}</b><small>totale incarichi</small></a>
+          <a href="#/dashboard/matches"><span>Prossime</span><b>${counts.upcoming||0}</b><small>ancora da dirigere</small></a>
+          <a href="#/dashboard/matches"><span>Concluse</span><b>${counts.completed||0}</b><small>gare terminate</small></a>
+          <a href="#/dashboard/matches" class="${Number(counts.pending||0)>0?'warning':''}"><span>Referti in attesa</span><b>${counts.pending||0}</b><small>da approvare</small></a>
+        </section>
+
+        ${next?`<section class="dashboard-panel referee-next-panel">
+          <div class="dashboard-panel-head"><div><span>Prossimo incarico</span><h3>${esc(next.round_name||'Prime League')}</h3></div><a class="btn small" href="#/dashboard/matches">Apri partite</a></div>
+          <div class="referee-next-match">
+            <div><strong>${esc(next.home_name)}</strong></div><b>VS</b><div><strong>${esc(next.away_name)}</strong></div>
+          </div>
+          <div class="referee-next-meta">${fmtDate(next.match_date)} · ${esc(next.venue||'Campo da definire')}</div>
+        </section>`:'<div class="dashboard-empty">Nessuna partita assegnata.</div>'}
+
         <section class="dashboard-panel dashboard-actions-panel">
-          <div class="dashboard-panel-head"><div><span>Operazioni</span><h3>Le tue attività</h3></div></div>
+          <div class="dashboard-panel-head"><div><span>Operazioni</span><h3>Azioni rapide</h3></div></div>
           <div class="dashboard-actions referee-dashboard-actions">
-            <a href="#/dashboard/matches"><span>⚽</span><strong>Partite assegnate</strong><small>Visualizza le gare da dirigere</small></a>
-            <a href="#/dashboard/matches"><span>✓</span><strong>Compila referto</strong><small>Inserisci risultato, eventi e MVP</small></a>
+            <a href="#/dashboard/matches"><span>⚽</span><strong>Partite assegnate</strong><small>Visualizza solamente le tue gare</small></a>
+            <a href="#/dashboard/matches"><span>✓</span><strong>Compila referto</strong><small>Distinta, risultato, eventi e note</small></a>
           </div>
         </section>`,section),'');
         bindLogout();
@@ -1358,10 +1376,23 @@ async function refereeMatchesArea(){
     </article>`;
   };
 
-  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Area arbitro</span><h2>Partite e referti arbitrali</h2><p>Inserisci risultato, ammonizioni ed espulsioni. La compilazione resta facoltativa.</p></div></div>
+  const counts=Object.fromEntries(Object.keys(labels).map(k=>[k,matches.filter(m=>statusOf(m)===k).length]));
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Area arbitro</span><h2>Le tue partite</h2><p>Vedi solo le gare assegnate dall’Admin. La compilazione del referto resta facoltativa.</p></div></div>
+    <section class="team-match-tabs referee-tabs">${Object.entries(labels).map(([k,l])=>`<button data-ref-tab="${k}" class="${k==='upcoming'?'active':''}"><span>${l}</span><b>${counts[k]}</b></button>`).join('')}<button data-ref-tab="all"><span>Tutte</span><b>${matches.length}</b></button></section>
     <div id="editor"></div>
-    <section class="team-match-grid">${matches.map(card).join('')||'<div class="team-area-empty">Nessuna partita disponibile.</div>'}</section>`,'matches'),'');
+    <section class="team-match-grid">${matches.map(card).join('')||'<div class="team-area-empty">Nessuna partita assegnata.</div>'}</section>`,'matches'),'');
   bindLogout();
+  let activeRefTab='upcoming';
+  const applyRefTab=()=>{
+    document.querySelectorAll('.referee-match-card').forEach(card=>{
+      card.hidden=activeRefTab!=='all'&&card.dataset.state!==activeRefTab;
+    });
+  };
+  document.querySelectorAll('[data-ref-tab]').forEach(btn=>btn.onclick=()=>{
+    document.querySelectorAll('[data-ref-tab]').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');activeRefTab=btn.dataset.refTab;applyRefTab();
+  });
+  applyRefTab();
 
   const open=async m=>{
     const detail=await api(`referee/matches/${m.id}/report-data`);
@@ -1424,6 +1455,7 @@ async function manageMatches(){
   const endpoint=isAdmin?'admin/matches':'team/matches';
   const d=await api(endpoint);
   const seasons=isAdmin?(d.seasons||[]):[];
+  const referees=isAdmin?(d.referees||[]):[];
   const matches=[...(d.matches||[])].sort((a,b)=>new Date(a.match_date)-new Date(b.match_date));
   const statusLabels={scheduled:'In programma',pending:'Referto in attesa',published:'Conclusa',postponed:'Rinviata'};
   const scheduleLabels={scheduled:'In programma',postponed:'Rinviata',suspended:'Sospesa',recovery:'Da recuperare',cancelled:'Annullata',completed:'Conclusa'};
@@ -1447,6 +1479,9 @@ async function manageMatches(){
       <span class="admin-match-status ${esc(m.status)}">${esc(statusLabels[m.status]||m.status)}</span>
     </div>
     <div class="admin-match-date">${fmtDate(m.match_date)}${m.venue?` · ${esc(m.venue)}`:''}</div>
+    <div class="admin-match-referee ${m.referee_user_id?'assigned':'missing'}">
+      <span>Arbitro</span><strong>${esc(m.referee_name||'Non assegnato')}</strong>
+    </div>
     <div class="admin-scoreboard">
       <div class="admin-club home">${logo(m.home_logo,m.home_name)}<strong>${esc(m.home_name)}</strong></div>
       <div class="admin-result">${m.status==='published'?`<b>${m.home_score??0}</b><span>–</span><b>${m.away_score??0}</b>`:'<span>VS</span>'}</div>
@@ -1483,7 +1518,9 @@ async function manageMatches(){
 
   const findMatch=id=>matches.find(x=>Number(x.id)===Number(id));
 
-  const basicForm=(m={})=>`<div class="admin-editor-card"><h3>${m.id?'Modifica dati partita':'Nuova partita'}</h3><form class="form-grid data-form"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasons.map(s=>`<option value="${s.id}" ${Number(m.season_id)===Number(s.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Giornata / turno</label><input class="input" name="round_name" value="${esc(m.round_name||'')}" required></div><div class="field"><label>Squadra casa</label><select class="input" name="home_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.home_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Squadra ospite</label><select class="input" name="away_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.away_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" value="${esc(String(m.match_date||'').replace(' ','T').slice(0,16))}" required></div><div class="field"><label>Campo</label><input class="input" name="venue" value="${esc(m.venue||'')}"></div><div class="field"><label>Fase</label><select class="input" name="phase">${Object.entries(phaseLabels).map(([v,l])=>`<option value="${v}" ${m.phase===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Stato calendario</label><select class="input" name="schedule_status">${Object.entries(scheduleLabels).map(([v,l])=>`<option value="${v}" ${(m.schedule_status||'scheduled')===v?'selected':''}>${l}</option>`).join('')}</select></div><input type="hidden" name="status" value="${esc(m.status||'scheduled')}"><input type="hidden" name="home_score" value="${m.home_score??''}"><input type="hidden" name="away_score" value="${m.away_score??''}"><input type="hidden" name="mvp_player_id" value="${m.mvp_player_id||''}"><div class="field full"><button class="btn primary">${m.id?'Salva modifiche':'Crea partita'}</button></div></form></div>`;
+  const basicForm=(m={})=>`<div class="admin-editor-card"><h3>${m.id?'Modifica dati partita':'Nuova partita'}</h3><form class="form-grid data-form"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasons.map(s=>`<option value="${s.id}" ${Number(m.season_id)===Number(s.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Giornata / turno</label><input class="input" name="round_name" value="${esc(m.round_name||'')}" required></div><div class="field"><label>Squadra casa</label><select class="input" name="home_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.home_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Squadra ospite</label><select class="input" name="away_team_id">${state.teams.map(t=>`<option value="${t.id}" ${Number(m.away_team_id)===Number(t.id)?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" value="${esc(String(m.match_date||'').replace(' ','T').slice(0,16))}" required></div><div class="field"><label>Campo</label><input class="input" name="venue" value="${esc(m.venue||'')}"></div>
+      <div class="field"><label>Arbitro assegnato</label><select class="input" name="referee_user_id"><option value="">Nessun arbitro</option>${referees.map(r=>`<option value="${r.id}" ${Number(m.referee_user_id)===Number(r.id)?'selected':''}>${esc(r.display_name)} · ${esc(r.email)}</option>`).join('')}</select></div>
+      <div class="field"><label>Fase</label><select class="input" name="phase">${Object.entries(phaseLabels).map(([v,l])=>`<option value="${v}" ${m.phase===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Stato calendario</label><select class="input" name="schedule_status">${Object.entries(scheduleLabels).map(([v,l])=>`<option value="${v}" ${(m.schedule_status||'scheduled')===v?'selected':''}>${l}</option>`).join('')}</select></div><input type="hidden" name="status" value="${esc(m.status||'scheduled')}"><input type="hidden" name="home_score" value="${m.home_score??''}"><input type="hidden" name="away_score" value="${m.away_score??''}"><input type="hidden" name="mvp_player_id" value="${m.mvp_player_id||''}"><div class="field full"><button class="btn primary">${m.id?'Salva modifiche':'Crea partita'}</button></div></form></div>`;
 
   const openBasic=(m={})=>showForm('editor',basicForm(m),async f=>{
     if(Number(f.home_team_id)===Number(f.away_team_id))throw new Error('Le squadre devono essere diverse');
