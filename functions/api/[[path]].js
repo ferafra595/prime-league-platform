@@ -268,6 +268,29 @@ async function publicDashboard(env) {
   const currentTable=await standings(env); return { next:next.results, recent:recent.results, topScorers:top.results, news:newsRows.results, sponsors:sponsors.results, standings:currentTable.standings };
 }
 
+
+async function sha256Hex(value){
+  const bytes=new TextEncoder().encode(String(value||''));
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function ensureVoteSchema(env){
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS anonymous_poll_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      poll_id INTEGER NOT NULL,
+      option_id INTEGER NOT NULL,
+      voter_hash TEXT NOT NULL,
+      ip_hash TEXT,
+      user_agent_hash TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(poll_id,voter_hash)
+    )`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_poll_votes_poll ON anonymous_poll_votes(poll_id)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_poll_votes_option ON anonymous_poll_votes(option_id)`)
+  ]);
+}
+
 async function route(request, env, path) {
   const method = request.method;
   const user = await currentUser(request, env);
@@ -681,20 +704,44 @@ async function route(request, env, path) {
     return json({news:rows.results});
   }
   if (path === 'public/polls') {
-    const polls = await env.DB.prepare(`SELECT p.*,COUNT(v.id) votes_count FROM polls p LEFT JOIN votes v ON v.poll_id=p.id WHERE p.status='open' AND p.starts_at<=datetime('now') AND p.ends_at>=datetime('now') GROUP BY p.id ORDER BY p.ends_at`).all();
-    for (const p of polls.results) {
-      p.options = (await env.DB.prepare(`SELECT o.*,COUNT(v.id) votes FROM poll_options o LEFT JOIN votes v ON v.option_id=o.id WHERE o.poll_id=? GROUP BY o.id ORDER BY o.id`).bind(p.id).all()).results;
-      p.user_voted = user ? !!(await env.DB.prepare('SELECT id FROM votes WHERE poll_id=? AND user_id=?').bind(p.id,user.id).first()) : false;
+    const voterToken=(request.headers.get('x-voter-token')||'').trim();
+    const voterHash=voterToken?await sha256Hex(`prime-league:${voterToken}`):'';
+    const polls=await env.DB.prepare(`SELECT p.*,
+      (SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.poll_id=p.id) votes_count
+      FROM polls p WHERE p.status IN ('open','closed') AND p.starts_at<=datetime('now')
+      ORDER BY CASE WHEN p.status='open' AND p.ends_at>=datetime('now') THEN 0 ELSE 1 END,p.ends_at DESC`).all();
+    for(const p of polls.results){
+      p.is_open=p.status==='open'&&new Date(p.ends_at).getTime()>=Date.now();
+      p.options=(await env.DB.prepare(`SELECT o.*,
+        (SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.option_id=o.id) votes
+        FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(p.id).all()).results;
+      p.user_voted=voterHash?!!(await env.DB.prepare('SELECT id FROM anonymous_poll_votes WHERE poll_id=? AND voter_hash=?').bind(p.id,voterHash).first()):false;
+      const selected=p.user_voted?await env.DB.prepare('SELECT option_id FROM anonymous_poll_votes WHERE poll_id=? AND voter_hash=?').bind(p.id,voterHash).first():null;
+      p.selected_option_id=selected?.option_id||null;
     }
-    return json({polls:polls.results,authenticated:!!user});
+    return json({polls:polls.results});
   }
   if (path === 'vote' && method === 'POST') {
-    const denied = requireAnyRole(user,'fan','super_admin','organizer','team_manager','referee'); if (denied) return denied;
-    const data = await body(request);
-    const option = await env.DB.prepare(`SELECT o.id,o.poll_id,p.status,p.starts_at,p.ends_at FROM poll_options o JOIN polls p ON p.id=o.poll_id WHERE o.id=?`).bind(data.optionId).first();
-    if (!option || option.status!=='open') return json({error:'Votazione non disponibile'},400);
-    try { await env.DB.prepare('INSERT INTO votes(poll_id,option_id,user_id) VALUES(?,?,?)').bind(option.poll_id,option.id,user.id).run(); }
-    catch { return json({error:'Hai già votato'},409); }
+    const data=await body(request);
+    const voterToken=String(data.voter_token||request.headers.get('x-voter-token')||'').trim();
+    if(voterToken.length<20)return json({error:'Identificatore di voto non valido. Ricarica la pagina.'},400);
+    const option=await env.DB.prepare(`SELECT o.id,o.poll_id,p.status,p.starts_at,p.ends_at
+      FROM poll_options o JOIN polls p ON p.id=o.poll_id WHERE o.id=?`).bind(Number(data.optionId)).first();
+    if(!option)return json({error:'Opzione non valida'},400);
+    const now=Date.now();
+    if(option.status!=='open'||new Date(option.starts_at).getTime()>now||new Date(option.ends_at).getTime()<now)
+      return json({error:'Votazione non disponibile'},400);
+    const ip=request.headers.get('CF-Connecting-IP')||request.headers.get('X-Forwarded-For')||'unknown';
+    const ua=request.headers.get('User-Agent')||'unknown';
+    const voterHash=await sha256Hex(`prime-league:${voterToken}`);
+    const ipHash=await sha256Hex(`prime-league-ip:${ip}`);
+    const uaHash=await sha256Hex(`prime-league-ua:${ua}`);
+    const ipVotes=await env.DB.prepare(`SELECT COUNT(*) c FROM anonymous_poll_votes WHERE poll_id=? AND ip_hash=?`).bind(option.poll_id,ipHash).first();
+    if(Number(ipVotes?.c||0)>=12)return json({error:'Troppi voti provenienti dalla stessa rete.'},429);
+    try{
+      await env.DB.prepare(`INSERT INTO anonymous_poll_votes(poll_id,option_id,voter_hash,ip_hash,user_agent_hash) VALUES(?,?,?,?,?)`)
+        .bind(option.poll_id,option.id,voterHash,ipHash,uaHash).run();
+    }catch{return json({error:'Hai già votato in questa votazione'},409);}
     return json({ok:true});
   }
 
@@ -1439,7 +1486,7 @@ async function route(request, env, path) {
   }
   if (path === 'admin/polls') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    if(method==='GET') { const polls=(await env.DB.prepare('SELECT * FROM polls ORDER BY created_at DESC').all()).results; for(const p of polls)p.options=(await env.DB.prepare('SELECT * FROM poll_options WHERE poll_id=?').bind(p.id).all()).results; return json({polls}); }
+    if(method==='GET') { const polls=(await env.DB.prepare(`SELECT p.*,(SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.poll_id=p.id) votes_count FROM polls p ORDER BY created_at DESC`).all()).results; for(const p of polls)p.options=(await env.DB.prepare(`SELECT o.*,(SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.option_id=o.id) votes FROM poll_options o WHERE poll_id=? ORDER BY o.id`).bind(p.id).all()).results; return json({polls}); }
     if(method==='POST') { const d=await body(request); const r=await env.DB.prepare('INSERT INTO polls(title,description,poll_type,starts_at,ends_at,status) VALUES(?,?,?,?,?,?)').bind(d.title,d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft').run(); for(const o of (d.options||[])) if(o.label) await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(r.meta.last_row_id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run(); await audit(env,user.id,'create','poll',r.meta.last_row_id,d); return json({ok:true,id:r.meta.last_row_id},201); }
   }
 
@@ -1468,8 +1515,8 @@ async function route(request, env, path) {
   }
   if (path.match(/^admin\/polls\/\d+$/)) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
-    if(method==='PUT'){await env.DB.prepare('UPDATE polls SET title=?,description=?,poll_type=?,starts_at=?,ends_at=?,status=? WHERE id=?').bind(safeText(d.title),d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft',id).run();await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();for(const o of (d.options||[]))if(o.label)await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();await audit(env,user.id,'update','poll',id,d);return json({ok:true});}
-    if(method==='DELETE'){await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM polls WHERE id=?').bind(id).run();await audit(env,user.id,'delete','poll',id,{});return json({ok:true});}
+    if(method==='PUT'){await env.DB.prepare('UPDATE polls SET title=?,description=?,poll_type=?,starts_at=?,ends_at=?,status=? WHERE id=?').bind(safeText(d.title),d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft',id).run();await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM anonymous_poll_votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();for(const o of (d.options||[]))if(o.label)await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();await audit(env,user.id,'update','poll',id,d);return json({ok:true});}
+    if(method==='DELETE'){await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM anonymous_poll_votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM polls WHERE id=?').bind(id).run();await audit(env,user.id,'delete','poll',id,{});return json({ok:true});}
   }
 
   return json({ error:'Endpoint non trovato', path },404);
@@ -1477,6 +1524,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureVoteSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
