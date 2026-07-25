@@ -132,6 +132,13 @@ async function ensureAuthSchema(env) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(match_id,team_id,player_id)
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS match_referees (
+      match_id INTEGER PRIMARY KEY,
+      referee_user_id INTEGER NOT NULL,
+      assigned_by_user_id INTEGER,
+      assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_profile_details (
       team_id INTEGER PRIMARY KEY,
       city TEXT,
@@ -879,8 +886,39 @@ async function route(request, env, path) {
 
   if (path === 'admin/matches') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    if(method==='GET') return json({matches:(await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name,COALESCE(msm.phase,'regular') phase,COALESCE(msm.schedule_status,CASE WHEN m.status='published' THEN 'completed' WHEN m.status='postponed' THEN 'postponed' ELSE 'scheduled' END) schedule_status,COALESCE(msm.manually_modified,0) manually_modified,msm.notes schedule_notes FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id ORDER BY m.match_date DESC`).all()).results,seasons:(await env.DB.prepare('SELECT * FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC').all()).results});
-    if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO matches(season_id,round_name,home_team_id,away_team_id,match_date,venue,status) VALUES(?,?,?,?,?,?,?)').bind(Number(d.season_id||1),d.round_name||'',Number(d.home_team_id),Number(d.away_team_id),d.match_date,d.venue||'',d.status||'scheduled').run(); await audit(env,user.id,'create','match',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    if(method==='GET') {
+      const matches=(await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
+        COALESCE(msm.phase,'regular') phase,
+        COALESCE(msm.schedule_status,CASE WHEN m.status='published' THEN 'completed' WHEN m.status='postponed' THEN 'postponed' ELSE 'scheduled' END) schedule_status,
+        COALESCE(msm.manually_modified,0) manually_modified,msm.notes schedule_notes,
+        mr.referee_user_id,u.display_name referee_name,u.email referee_email
+        FROM matches m
+        JOIN teams ht ON ht.id=m.home_team_id
+        JOIN teams at ON at.id=m.away_team_id
+        LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
+        LEFT JOIN match_referees mr ON mr.match_id=m.id
+        LEFT JOIN users u ON u.id=mr.referee_user_id
+        ORDER BY m.match_date DESC`).all()).results;
+      const seasons=(await env.DB.prepare('SELECT * FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC').all()).results;
+      const referees=(await env.DB.prepare(`SELECT u.id,u.display_name,u.email
+        FROM users u LEFT JOIN auth_roles ar ON ar.user_id=u.id
+        WHERE u.is_active=1 AND COALESCE(ar.role,u.role)='referee'
+        ORDER BY u.display_name`).all()).results;
+      return json({matches,seasons,referees});
+    }
+    if(method==='POST') {
+      const d=await body(request);
+      const result=await env.DB.prepare('INSERT INTO matches(season_id,round_name,home_team_id,away_team_id,match_date,venue,status) VALUES(?,?,?,?,?,?,?)')
+        .bind(Number(d.season_id||1),d.round_name||'',Number(d.home_team_id),Number(d.away_team_id),d.match_date,d.venue||'',d.status||'scheduled').run();
+      if(d.referee_user_id){
+        await env.DB.prepare(`INSERT INTO match_referees(match_id,referee_user_id,assigned_by_user_id,updated_at)
+          VALUES(?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(match_id) DO UPDATE SET referee_user_id=excluded.referee_user_id,assigned_by_user_id=excluded.assigned_by_user_id,updated_at=CURRENT_TIMESTAMP`)
+          .bind(result.meta.last_row_id,Number(d.referee_user_id),user.id).run();
+      }
+      await audit(env,user.id,'create','match',result.meta.last_row_id,d);
+      return json({ok:true,id:result.meta.last_row_id},201);
+    }
   }
   if (path.match(/^admin\/matches\/\d+$/) && method==='PUT') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=await body(request);
@@ -888,6 +926,14 @@ async function route(request, env, path) {
     const scheduleStatus=['scheduled','postponed','suspended','recovery','cancelled','completed'].includes(d.schedule_status)?d.schedule_status:(d.status==='published'?'completed':d.status==='postponed'?'postponed':'scheduled');
     const phase=['regular','playoff','semifinal','final'].includes(d.phase)?d.phase:'regular';
     await env.DB.prepare(`INSERT INTO match_schedule_meta(match_id,phase,schedule_status,manually_modified,notes,updated_at) VALUES(?,?,?,1,?,CURRENT_TIMESTAMP) ON CONFLICT(match_id) DO UPDATE SET phase=excluded.phase,schedule_status=excluded.schedule_status,manually_modified=1,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP`).bind(id,phase,scheduleStatus,d.schedule_notes||'').run();
+    if(d.referee_user_id){
+      await env.DB.prepare(`INSERT INTO match_referees(match_id,referee_user_id,assigned_by_user_id,updated_at)
+        VALUES(?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(match_id) DO UPDATE SET referee_user_id=excluded.referee_user_id,assigned_by_user_id=excluded.assigned_by_user_id,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id,Number(d.referee_user_id),user.id).run();
+    }else{
+      await env.DB.prepare('DELETE FROM match_referees WHERE match_id=?').bind(id).run();
+    }
     if(Array.isArray(d.events)) { await env.DB.prepare('DELETE FROM match_events WHERE match_id=?').bind(id).run(); for(const e of d.events) await env.DB.prepare('INSERT INTO match_events(match_id,team_id,player_id,assist_player_id,event_type,quantity) VALUES(?,?,?,?,?,?)').bind(id,Number(e.team_id),e.player_id?Number(e.player_id):null,e.assist_player_id?Number(e.assist_player_id):null,e.event_type,Number(e.quantity||1)).run(); }
     await audit(env,user.id,'update','match',id,d); return json({ok:true});
   }
@@ -901,7 +947,12 @@ async function route(request, env, path) {
         (SELECT s.events_json FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_events_json,
         (SELECT s.admin_note FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) admin_note,
         (SELECT json_extract(s.notes,'$.lineup') FROM match_submissions s WHERE s.match_id=m.id AND s.submitted_by_user_id=? ORDER BY s.created_at DESC LIMIT 1) submission_lineup_json
-        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id ORDER BY m.match_date DESC`).bind(user.id,user.id,user.id,user.id,user.id,user.id)
+        FROM matches m
+        JOIN teams ht ON ht.id=m.home_team_id
+        JOIN teams at ON at.id=m.away_team_id
+        JOIN match_referees mr ON mr.match_id=m.id
+        WHERE mr.referee_user_id=?
+        ORDER BY m.match_date DESC`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id)
       : env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
         (SELECT s.status FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_status,
         (SELECT s.home_score FROM match_submissions s WHERE s.match_id=m.id AND s.team_id=? ORDER BY s.created_at DESC LIMIT 1) submission_home_score,
@@ -918,7 +969,9 @@ async function route(request, env, path) {
   if (path.match(/^referee\/matches\/\d+\/report-data$/) && method==='GET') {
     const denied=requireAnyRole(user,'referee'); if(denied)return denied;
     const id=Number(path.split('/')[2]);
-    const match=await env.DB.prepare('SELECT * FROM matches WHERE id=?').bind(id).first();
+    const match=await env.DB.prepare(`SELECT m.* FROM matches m
+      JOIN match_referees mr ON mr.match_id=m.id
+      WHERE m.id=? AND mr.referee_user_id=?`).bind(id,user.id).first();
     if(!match)return json({error:'Partita non trovata'},404);
     const players=await env.DB.prepare(`SELECT id,team_id,first_name,last_name,shirt_number,role FROM players WHERE team_id IN (?,?) AND is_active=1 ORDER BY team_id,last_name`).bind(match.home_team_id,match.away_team_id).all();
     return json({match,players:players.results});
@@ -927,7 +980,8 @@ async function route(request, env, path) {
   if (path === 'team/submissions' && method==='POST') {
     const denied=requireAnyRole(user,'team_manager','referee'); if(denied)return denied; const d=await body(request);
     const match=hasRole(user,'referee')
-      ? await env.DB.prepare('SELECT * FROM matches WHERE id=?').bind(Number(d.match_id)).first()
+      ? await env.DB.prepare(`SELECT m.* FROM matches m JOIN match_referees mr ON mr.match_id=m.id
+          WHERE m.id=? AND mr.referee_user_id=?`).bind(Number(d.match_id),user.id).first()
       : await env.DB.prepare('SELECT * FROM matches WHERE id=? AND (home_team_id=? OR away_team_id=?)').bind(Number(d.match_id),user.team_id,user.team_id).first();
     if(!match)return json({error:'Partita non valida'},400);
     const submissionTeamId=hasRole(user,'referee')?match.home_team_id:user.team_id;
@@ -948,6 +1002,32 @@ async function route(request, env, path) {
     await audit(env,user.id,'submit','match_submission',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201);
   }
 
+
+  if (path === 'referee/dashboard' && method==='GET') {
+    const denied=requireAnyRole(user,'referee'); if(denied)return denied;
+    const [nextMatch,counts,recent] = await Promise.all([
+      env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo
+        FROM matches m JOIN match_referees mr ON mr.match_id=m.id
+        JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE mr.referee_user_id=? AND m.status!='published' AND datetime(m.match_date)>=datetime('now')
+        ORDER BY datetime(m.match_date) LIMIT 1`).bind(user.id).first(),
+      env.DB.prepare(`SELECT
+        COUNT(*) assigned,
+        COALESCE(SUM(CASE WHEN m.status='published' THEN 1 ELSE 0 END),0) completed,
+        COALESCE(SUM(CASE WHEN m.status!='published' AND datetime(m.match_date)>=datetime('now') THEN 1 ELSE 0 END),0) upcoming,
+        COALESCE(SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END),0) pending
+        FROM match_referees mr
+        JOIN matches m ON m.id=mr.match_id
+        LEFT JOIN match_submissions s ON s.match_id=m.id AND s.submitted_by_user_id=?
+        WHERE mr.referee_user_id=?`).bind(user.id,user.id).first(),
+      env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name
+        FROM matches m JOIN match_referees mr ON mr.match_id=m.id
+        JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE mr.referee_user_id=? AND m.status='published'
+        ORDER BY datetime(m.match_date) DESC LIMIT 5`).bind(user.id).all()
+    ]);
+    return json({next_match:nextMatch,counts:counts||{},recent:recent.results||[]});
+  }
 
   if (path === 'admin/dashboard' && method==='GET') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
