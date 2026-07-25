@@ -94,7 +94,23 @@ const avatar = (url,name) => url ? `<img class="avatar" src="${esc(url)}" alt="$
 function ensureMediaStyles(){if(!document.querySelector('link[data-prime-media]')){const l=document.createElement('link');l.rel='stylesheet';l.href='/assets/media-admin.css';l.dataset.primeMedia='1';document.head.appendChild(l)}}
 function layout(content, active='home'){
   const nav = [['home','Home'],['partite','Partite'],['classifica','Classifica'],['squadre','Squadre'],['giocatori','Giocatori'],['statistiche','Statistiche'],['vota','Vota'],['news','News']];
-  const mobile = [['home','⌂','Home'],['partite','⚽','Partite'],['classifica','🏆','Classifica'],['squadre','◫','Squadre'],[state.user?'dashboard':'login','◉',state.user?'Area':'Accedi']];
+  const mobile = [
+    ['home','⌂','Home'],
+    ['partite','⚽','Partite'],
+    ['classifica','🏆','Classifica'],
+    ['squadre','◫','Squadre'],
+    ['giocatori','◎','Giocatori'],
+    ['statistiche','▥','Statistiche'],
+    ['vota','★','Vota'],
+    [state.user?'dashboard':'login','◉',state.user?'Area':'Accedi']
+  ];
+  if(!document.querySelector('link[data-prime-mobile-nav]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/mobile-nav.css';
+    link.dataset.primeMobileNav='1';
+    document.head.appendChild(link);
+  }
   return `<div class="shell">
     <div class="league-strip" id="live-strip"><div><span>PRIME LEAGUE</span><span>Stagione 2026/27</span></div><div><a href="#/news">News</a><a href="#/vota">Votazioni</a></div></div>
     <header class="topbar"><a class="brand" href="#/home"><img class="brand-crest" src="/assets/prime-league-crest.png" alt="Logo Prime League"><span>PRIME LEAGUE<small>IL CALCIO DEL TERRITORIO</small></span></a>
