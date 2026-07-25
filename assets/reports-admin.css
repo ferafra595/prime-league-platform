@@ -30,3 +30,21 @@
 .review-mvp,.review-notes,.review-admin-note{margin-top:10px;border-top:1px solid #e6ecf3;padding-top:10px;display:flex;gap:10px}.review-notes,.review-admin-note{display:block}.review-notes p,.review-admin-note p{margin:4px 0;color:#5f6d81}
 .review-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 @media(max-width:700px){.report-review-overlay{padding:10px}.report-review-head,.review-info-banner{flex-direction:column}.review-events-grid{grid-template-columns:1fr 1fr}}
+
+
+.lineup-editor{margin:18px 0;background:#f8fafc;border:1px solid #dbe4ef;border-radius:18px;padding:15px}
+.lineup-editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
+.lineup-editor-head h4{margin:0}.lineup-editor-head p{margin:4px 0 0;color:#718095;font-size:12px}
+.lineup-editor-head>span{padding:6px 9px;border-radius:999px;background:#edf3fb;color:#315785;font-size:10px;font-weight:900}
+.lineup-table-wrap{overflow:auto}.lineup-table{width:100%;border-collapse:collapse;min-width:720px}
+.lineup-table th,.lineup-table td{padding:10px;border-bottom:1px solid #e5ebf2;text-align:center;font-size:12px}
+.lineup-table th:first-child,.lineup-table td:first-child{text-align:left}
+.lineup-player{display:flex;align-items:center;gap:9px;text-align:left}.lineup-player .avatar{width:36px;height:36px;flex:0 0 36px}
+.lineup-player div{display:flex;flex-direction:column}.lineup-player small{color:#718095;margin-top:2px}
+.lineup-table input[type="checkbox"],.lineup-table input[type="radio"]{width:18px;height:18px;accent-color:#145dff}
+.review-lineup{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.review-lineup>div{background:#f7f9fc;border-radius:12px;padding:10px;display:flex;justify-content:space-between;gap:8px}
+.review-lineup strong{font-size:11px}.review-lineup span{font-weight:900}
+.review-lineup-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.review-lineup-list span{background:#eef3fa;padding:6px 8px;border-radius:999px;font-size:11px}
+@media(max-width:700px){.review-lineup{grid-template-columns:1fr 1fr}}

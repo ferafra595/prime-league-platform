@@ -912,6 +912,61 @@ async function teamRoster(){
   apply();
 }
 
+
+function lineupEditorMarkup(players,initial=[],options={}){
+  const byId=new Map((initial||[]).map(x=>[Number(x.player_id),x]));
+  const allowTeam=Boolean(options.allowTeam);
+  const teams=options.teams||[];
+  return `<div class="lineup-editor">
+    <div class="lineup-editor-head">
+      <div><h4>Distinta e presenze</h4><p>Seleziona convocati, titolari, riserve e chi ha effettivamente giocato.</p></div>
+      <span>Facoltativo</span>
+    </div>
+    <div class="lineup-table-wrap"><table class="lineup-table">
+      <thead><tr>${allowTeam?'<th>Squadra</th>':''}<th>Giocatore</th><th>Convocato</th><th>Titolare</th><th>Riserva</th><th>Ha giocato</th></tr></thead>
+      <tbody>${players.map(p=>{
+        const row=byId.get(Number(p.id))||{};
+        const role=row.lineup_role||'reserve';
+        return `<tr data-player="${p.id}" data-team="${p.team_id}">
+          ${allowTeam?`<td>${esc(teams.find(t=>Number(t.id)===Number(p.team_id))?.name||p.team_name||'')}</td>`:''}
+          <td><div class="lineup-player">${avatar(p.photo_url,`${p.first_name} ${p.last_name}`)}<div><strong>${esc(p.first_name)} ${esc(p.last_name)}</strong><small>${p.shirt_number?`#${p.shirt_number} · `:''}${esc(p.role||'')}</small></div></div></td>
+          <td><input type="checkbox" class="lineup-called" ${row.is_called!==0&&row.is_called!==false?'checked':''}></td>
+          <td><input type="radio" name="lineup-role-${p.id}" value="starter" class="lineup-role" ${role==='starter'?'checked':''}></td>
+          <td><input type="radio" name="lineup-role-${p.id}" value="reserve" class="lineup-role" ${role!=='starter'?'checked':''}></td>
+          <td><input type="checkbox" class="lineup-played" ${row.played?'checked':''}></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function readLineupEditor(root){
+  return [...root.querySelectorAll('.lineup-table tbody tr')].map(row=>({
+    team_id:Number(row.dataset.team),
+    player_id:Number(row.dataset.player),
+    is_called:row.querySelector('.lineup-called').checked,
+    lineup_role:row.querySelector('.lineup-role:checked')?.value||'reserve',
+    played:row.querySelector('.lineup-played').checked
+  })).filter(x=>x.is_called||x.played);
+}
+
+function bindLineupEditor(root){
+  root.querySelectorAll('.lineup-table tbody tr').forEach(row=>{
+    const called=row.querySelector('.lineup-called');
+    const played=row.querySelector('.lineup-played');
+    const roles=[...row.querySelectorAll('.lineup-role')];
+    const sync=()=>{
+      if(played.checked)called.checked=true;
+      roles.forEach(r=>r.disabled=!called.checked);
+      played.disabled=!called.checked;
+      if(!called.checked)played.checked=false;
+    };
+    called.addEventListener('change',sync);
+    played.addEventListener('change',sync);
+    sync();
+  });
+}
+
 async function teamMatchesArea(){
   const [d,pd]=await Promise.all([api('team/matches'),api('team/players')]);
   const matches=d.matches||[];
@@ -966,6 +1021,8 @@ async function teamMatchesArea(){
   const openReport=m=>{
     let events=[];
     if(m.submission_events_json){try{events=JSON.parse(m.submission_events_json)||[]}catch{}}
+    let submissionLineup=[];
+    if(m.submission_lineup_json){try{submissionLineup=JSON.parse(m.submission_lineup_json)||[]}catch{}}
     let submissionNotes=m.submission_notes||'';
     let proposedMvp=m.submission_mvp_player_id||null;
     try{
@@ -973,6 +1030,7 @@ async function teamMatchesArea(){
       if(parsedNotes&&typeof parsedNotes==='object'){
         submissionNotes=parsedNotes.text||'';
         proposedMvp=parsedNotes.mvp_player_id||proposedMvp;
+        if(Array.isArray(parsedNotes.lineup))submissionLineup=parsedNotes.lineup;
       }
     }catch{}
     const teamPlayers=players;
@@ -1000,6 +1058,7 @@ async function teamMatchesArea(){
         <b>–</b>
         <div><label>${esc(m.away_name)}</label><input class="input" id="team-away-score" type="number" min="0" value="${m.submission_away_score??m.away_score??0}"></div>
       </div>
+      ${lineupEditorMarkup(teamPlayers,submissionLineup)}
       <div class="team-event-heading"><div><h4>Eventi della tua squadra</h4><p>Inserisci marcatori, assist e cartellini. L’Admin verificherà tutto prima della pubblicazione.</p></div><div><button class="btn small add-team-event" data-type="goal">+ Gol</button><button class="btn small add-team-event" data-type="assist">+ Assist</button><button class="btn small add-team-event" data-type="yellow">+ Giallo</button><button class="btn small add-team-event" data-type="red">+ Rosso</button></div></div>
       <div id="team-report-events"></div>
       <div class="field"><label>MVP proposto</label><select class="input" id="team-report-mvp"><option value="">Nessuna proposta</option>${teamPlayers.map(p=>`<option value="${p.id}" ${Number(proposedMvp)===Number(p.id)?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('')}</select></div>
@@ -1012,6 +1071,7 @@ async function teamMatchesArea(){
       <div class="team-report-submit"><span>Dopo l’invio il referto resterà in attesa. Solo l’approvazione dell’Admin renderà ufficiali risultato, eventi e MVP.</span><button class="btn primary" id="send-team-report">Invia all’Admin</button></div>
     </section>`;
     render();
+    bindLineupEditor(document.querySelector('#editor'));
     document.querySelector('#editor').scrollIntoView({behavior:'smooth',block:'start'});
     document.querySelector('#close-team-report').onclick=()=>document.querySelector('#editor').innerHTML='';
     document.querySelectorAll('.add-team-event').forEach(b=>b.onclick=()=>{events.push({team_id:Number(state.user.team_id),player_id:'',event_type:b.dataset.type,quantity:1});render()});
@@ -1019,7 +1079,10 @@ async function teamMatchesArea(){
       const clean=events.filter(e=>e.player_id).map(e=>({...e,team_id:Number(state.user.team_id),player_id:Number(e.player_id),quantity:Number(e.quantity||1)}));
       await api('team/submissions',{method:'POST',body:JSON.stringify({
         match_id:m.id,home_score:Number(document.querySelector('#team-home-score').value||0),away_score:Number(document.querySelector('#team-away-score').value||0),
-        events:clean,mvp_player_id:document.querySelector('#team-report-mvp').value||null,notes:document.querySelector('#team-report-notes').value||''
+        events:clean,
+        lineup:readLineupEditor(document.querySelector('#editor')),
+        mvp_player_id:document.querySelector('#team-report-mvp').value||null,
+        notes:document.querySelector('#team-report-notes').value||''
       })});
       alert('Referto inviato correttamente.');teamMatchesArea();
     };
@@ -1305,6 +1368,8 @@ async function refereeMatchesArea(){
     const players=detail.players||[];
     let events=[];
     if(m.submission_events_json){try{events=JSON.parse(m.submission_events_json)||[]}catch{}}
+    let submissionLineup=[];
+    if(m.submission_lineup_json){try{submissionLineup=JSON.parse(m.submission_lineup_json)||[]}catch{}}
     const render=()=>{
       const box=document.querySelector('#referee-events');if(!box)return;
       box.innerHTML=events.map((e,i)=>`<div class="team-event-row referee-event-row" data-i="${i}">
@@ -1327,19 +1392,21 @@ async function refereeMatchesArea(){
     document.querySelector('#editor').innerHTML=`<section class="team-report-editor">
       <div class="account-editor-head"><div><span class="eyebrow">Referto arbitro</span><h3>${esc(m.home_name)} – ${esc(m.away_name)}</h3><p>${fmtDate(m.match_date)}</p></div><button class="btn small close-referee-report">Chiudi</button></div>
       <div class="team-report-score"><div><label>${esc(m.home_name)}</label><input class="input" id="ref-home-score" type="number" min="0" value="${m.submission_home_score??m.home_score??0}"></div><b>–</b><div><label>${esc(m.away_name)}</label><input class="input" id="ref-away-score" type="number" min="0" value="${m.submission_away_score??m.away_score??0}"></div></div>
-      <div class="review-info-banner"><strong>Compilazione facoltativa.</strong><span>Puoi inserire soltanto cartellini ed espulsioni oppure completare anche risultato, gol e assist.</span></div>
+      <div class="review-info-banner"><strong>Compilazione facoltativa.</strong><span>Puoi inserire distinta, presenze, cartellini ed espulsioni oppure completare anche risultato, gol e assist.</span></div>
+      ${lineupEditorMarkup(players,submissionLineup,{allowTeam:true,teams:[{id:m.home_team_id,name:m.home_name},{id:m.away_team_id,name:m.away_name}]})}
       <div class="team-event-heading"><div><h4>Eventi arbitrali</h4><p>Seleziona sempre la squadra e il giocatore corretto.</p></div><div><button class="btn small add-ref-event" data-type="yellow">+ Giallo</button><button class="btn small add-ref-event" data-type="red">+ Rosso</button><button class="btn small add-ref-event" data-type="goal">+ Gol</button><button class="btn small add-ref-event" data-type="assist">+ Assist</button></div></div>
       <div id="referee-events"></div>
       <div class="field"><label>Note arbitrali</label><textarea class="input" id="referee-notes" rows="4"></textarea></div>
       <div class="team-report-submit"><span>L’Admin controllerà il referto prima della pubblicazione.</span><button class="btn primary send-referee-report">Invia all’Admin</button></div>
     </section>`;
     render();
+    bindLineupEditor(document.querySelector('#editor'));
     document.querySelector('#editor').scrollIntoView({behavior:'smooth'});
     document.querySelector('.close-referee-report').onclick=()=>document.querySelector('#editor').innerHTML='';
     document.querySelectorAll('.add-ref-event').forEach(b=>b.onclick=()=>{events.push({team_id:Number(m.home_team_id),player_id:'',event_type:b.dataset.type,quantity:1});render()});
     document.querySelector('.send-referee-report').onclick=async()=>{
       const clean=events.filter(e=>e.player_id).map(e=>({...e,team_id:Number(e.team_id),player_id:Number(e.player_id),quantity:Number(e.quantity||1)}));
-      await api('team/submissions',{method:'POST',body:JSON.stringify({match_id:m.id,home_score:Number(document.querySelector('#ref-home-score').value||0),away_score:Number(document.querySelector('#ref-away-score').value||0),events:clean,notes:document.querySelector('#referee-notes').value||''})});
+      await api('team/submissions',{method:'POST',body:JSON.stringify({match_id:m.id,home_score:Number(document.querySelector('#ref-home-score').value||0),away_score:Number(document.querySelector('#ref-away-score').value||0),events:clean,lineup:readLineupEditor(document.querySelector('#editor')),notes:document.querySelector('#referee-notes').value||''})});
       alert('Referto arbitrale inviato.');refereeMatchesArea();
     };
   };
@@ -1739,7 +1806,11 @@ async function submissions(){
   const parseNotes=value=>{
     try{
       const parsed=JSON.parse(value||'{}');
-      return typeof parsed==='object'&&parsed!==null?{text:parsed.text||'',mvp_player_id:parsed.mvp_player_id||null}:{text:String(value||''),mvp_player_id:null};
+      return typeof parsed==='object'&&parsed!==null?{
+        text:parsed.text||'',
+        mvp_player_id:parsed.mvp_player_id||null,
+        lineup:Array.isArray(parsed.lineup)?parsed.lineup:[]
+      }:{text:String(value||''),mvp_player_id:null,lineup:[]};
     }catch{return {text:value||'',mvp_player_id:null}}
   };
 
@@ -1755,6 +1826,7 @@ async function submissions(){
     const submissionCard=s=>{
       let events=[];try{events=JSON.parse(s.events_json||'[]')||[]}catch{}
       const notes=parseNotes(s.notes);
+      const lineup=Array.isArray(notes.lineup)?notes.lineup:[];
       const grouped={goal:[],assist:[],yellow:[],red:[]};
       events.forEach(e=>{if(grouped[e.event_type])grouped[e.event_type].push(e)});
       const eventSections=Object.entries(grouped).filter(([,arr])=>arr.length).map(([type,arr])=>`<div class="review-event-group">
@@ -1767,6 +1839,13 @@ async function submissions(){
           <span class="review-status ${esc(s.status)}">${s.status==='pending'?'In attesa':s.status==='approved'?'Approvato':s.status==='rejected'?'Rifiutato':'Superato'}</span>
         </div>
         <div class="review-proposed-score"><span>${esc(match.home_name||'Casa')}</span><b>${s.home_score} – ${s.away_score}</b><span>${esc(match.away_name||'Ospite')}</span></div>
+        ${lineup.length?`<div class="review-lineup">
+          <div><strong>Convocati</strong><span>${lineup.filter(x=>x.is_called!==false).length}</span></div>
+          <div><strong>Titolari</strong><span>${lineup.filter(x=>x.lineup_role==='starter').length}</span></div>
+          <div><strong>Riserve</strong><span>${lineup.filter(x=>x.lineup_role!=='starter').length}</span></div>
+          <div><strong>Hanno giocato</strong><span>${lineup.filter(x=>x.played).length}</span></div>
+        </div>
+        <div class="review-lineup-list">${lineup.map(x=>`<span>${esc(playerName(x.player_id))} · ${x.lineup_role==='starter'?'Titolare':'Riserva'} · ${x.played?'Ha giocato':'Non entrato'}</span>`).join('')}</div>`:''}
         <div class="review-events-grid">${eventSections}</div>
         ${notes.mvp_player_id?`<div class="review-mvp"><strong>MVP proposto</strong><span>${esc(playerName(notes.mvp_player_id))}</span></div>`:''}
         ${notes.text?`<div class="review-notes"><strong>Note</strong><p>${esc(notes.text)}</p></div>`:''}
