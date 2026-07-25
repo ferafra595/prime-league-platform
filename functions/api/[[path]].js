@@ -292,6 +292,8 @@ async function ensureAnonymousVoteSchema(env){
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_ip ON anonymous_poll_votes(poll_id,ip_hash)`)
   ]);
   try{await env.DB.prepare(`ALTER TABLE polls ADD COLUMN match_id INTEGER`).run()}catch{}
+  try{await env.DB.prepare(`ALTER TABLE anonymous_poll_votes ADD COLUMN user_agent_hash TEXT`).run()}catch{}
+  try{await env.DB.prepare(`ALTER TABLE anonymous_poll_votes ADD COLUMN browser_hash TEXT`).run()}catch{}
 }
 
 async function route(request, env, path) {
@@ -771,13 +773,21 @@ async function route(request, env, path) {
     if(Number(networkVotes?.c||0)>=100)
       return json({error:'Limite di sicurezza raggiunto per questa rete'},429);
 
+    const existingVote=await env.DB.prepare(`SELECT id FROM anonymous_poll_votes
+      WHERE poll_id=? AND voter_hash=? LIMIT 1`).bind(option.poll_id,voterHash).first();
+    if(existingVote)return json({error:'Hai già votato in questa votazione'},409);
+
     try{
       await env.DB.prepare(`INSERT INTO anonymous_poll_votes
-        (poll_id,option_id,voter_hash,ip_hash,browser_hash)
-        VALUES(?,?,?,?,?)`)
-        .bind(option.poll_id,option.id,voterHash,ipHash,browserHash).run();
-    }catch{
-      return json({error:'Hai già votato in questa votazione'},409);
+        (poll_id,option_id,voter_hash,ip_hash,user_agent_hash,browser_hash)
+        VALUES(?,?,?,?,?,?)`)
+        .bind(option.poll_id,option.id,voterHash,ipHash,browserHash,browserHash).run();
+    }catch(error){
+      console.error('Anonymous vote insert failed',error);
+      return json({
+        error:'Impossibile registrare il voto. Riprova tra qualche secondo.',
+        detail:error?.message||String(error)
+      },500);
     }
     return json({ok:true});
   }
