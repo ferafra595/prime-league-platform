@@ -269,12 +269,13 @@ async function publicDashboard(env) {
 }
 
 
-async function sha256Hex(value){
-  const bytes=new TextEncoder().encode(String(value||''));
-  const digest=await crypto.subtle.digest('SHA-256',bytes);
-  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+async function voteHash(value){
+  const data=new TextEncoder().encode(String(value||''));
+  const digest=await crypto.subtle.digest('SHA-256',data);
+  return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
-async function ensureVoteSchema(env){
+
+async function ensureAnonymousVoteSchema(env){
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS anonymous_poll_votes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,12 +283,13 @@ async function ensureVoteSchema(env){
       option_id INTEGER NOT NULL,
       voter_hash TEXT NOT NULL,
       ip_hash TEXT,
-      user_agent_hash TEXT,
+      browser_hash TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(poll_id,voter_hash)
     )`),
-    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_poll_votes_poll ON anonymous_poll_votes(poll_id)`),
-    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_poll_votes_option ON anonymous_poll_votes(option_id)`)
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_poll ON anonymous_poll_votes(poll_id)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_option ON anonymous_poll_votes(option_id)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_ip ON anonymous_poll_votes(poll_id,ip_hash)`)
   ]);
 }
 
@@ -703,45 +705,79 @@ async function route(request, env, path) {
     const rows = await env.DB.prepare('SELECT * FROM news WHERE is_published=1 ORDER BY published_at DESC').all();
     return json({news:rows.results});
   }
-  if (path === 'public/polls') {
-    const voterToken=(request.headers.get('x-voter-token')||'').trim();
-    const voterHash=voterToken?await sha256Hex(`prime-league:${voterToken}`):'';
-    const polls=await env.DB.prepare(`SELECT p.*,
-      (SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.poll_id=p.id) votes_count
-      FROM polls p WHERE p.status IN ('open','closed') AND p.starts_at<=datetime('now')
-      ORDER BY CASE WHEN p.status='open' AND p.ends_at>=datetime('now') THEN 0 ELSE 1 END,p.ends_at DESC`).all();
-    for(const p of polls.results){
-      p.is_open=p.status==='open'&&new Date(p.ends_at).getTime()>=Date.now();
-      p.options=(await env.DB.prepare(`SELECT o.*,
-        (SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.option_id=o.id) votes
-        FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(p.id).all()).results;
-      p.user_voted=voterHash?!!(await env.DB.prepare('SELECT id FROM anonymous_poll_votes WHERE poll_id=? AND voter_hash=?').bind(p.id,voterHash).first()):false;
-      const selected=p.user_voted?await env.DB.prepare('SELECT option_id FROM anonymous_poll_votes WHERE poll_id=? AND voter_hash=?').bind(p.id,voterHash).first():null;
-      p.selected_option_id=selected?.option_id||null;
+  if (path === 'public/polls' && method==='GET') {
+    const rawToken=String(request.headers.get('x-prime-voter')||'').trim();
+    const voterHash=rawToken.length>=32?await voteHash(`pl-voter:${rawToken}`):'';
+
+    const polls=(await env.DB.prepare(`SELECT p.*,
+      (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.poll_id=p.id) votes_count
+      FROM polls p
+      WHERE p.status IN ('open','closed')
+        AND datetime(p.starts_at)<=datetime('now')
+      ORDER BY
+        CASE WHEN p.status='open' AND datetime(p.ends_at)>=datetime('now') THEN 0 ELSE 1 END,
+        datetime(p.ends_at) DESC`).all()).results;
+
+    for(const poll of polls){
+      poll.is_open=poll.status==='open' && new Date(poll.ends_at).getTime()>=Date.now();
+      poll.options=(await env.DB.prepare(`SELECT o.*,
+        (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.option_id=o.id) votes
+        FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(poll.id).all()).results;
+
+      poll.user_voted=false;
+      poll.selected_option_id=null;
+      if(voterHash){
+        const previous=await env.DB.prepare(`SELECT option_id FROM anonymous_poll_votes
+          WHERE poll_id=? AND voter_hash=? LIMIT 1`).bind(poll.id,voterHash).first();
+        if(previous){
+          poll.user_voted=true;
+          poll.selected_option_id=previous.option_id;
+        }
+      }
     }
-    return json({polls:polls.results});
+    return json({polls});
   }
-  if (path === 'vote' && method === 'POST') {
+
+  if (path === 'public/vote' && method==='POST') {
     const data=await body(request);
-    const voterToken=String(data.voter_token||request.headers.get('x-voter-token')||'').trim();
-    if(voterToken.length<20)return json({error:'Identificatore di voto non valido. Ricarica la pagina.'},400);
+    const rawToken=String(data.voter_token||request.headers.get('x-prime-voter')||'').trim();
+    if(rawToken.length<32)return json({error:'Sessione di voto non valida. Ricarica la pagina.'},400);
+
     const option=await env.DB.prepare(`SELECT o.id,o.poll_id,p.status,p.starts_at,p.ends_at
-      FROM poll_options o JOIN polls p ON p.id=o.poll_id WHERE o.id=?`).bind(Number(data.optionId)).first();
+      FROM poll_options o JOIN polls p ON p.id=o.poll_id WHERE o.id=?`)
+      .bind(Number(data.option_id)).first();
+
     if(!option)return json({error:'Opzione non valida'},400);
     const now=Date.now();
     if(option.status!=='open'||new Date(option.starts_at).getTime()>now||new Date(option.ends_at).getTime()<now)
-      return json({error:'Votazione non disponibile'},400);
+      return json({error:'Questa votazione non è disponibile'},400);
+
     const ip=request.headers.get('CF-Connecting-IP')||request.headers.get('X-Forwarded-For')||'unknown';
-    const ua=request.headers.get('User-Agent')||'unknown';
-    const voterHash=await sha256Hex(`prime-league:${voterToken}`);
-    const ipHash=await sha256Hex(`prime-league-ip:${ip}`);
-    const uaHash=await sha256Hex(`prime-league-ua:${ua}`);
-    const ipVotes=await env.DB.prepare(`SELECT COUNT(*) c FROM anonymous_poll_votes WHERE poll_id=? AND ip_hash=?`).bind(option.poll_id,ipHash).first();
-    if(Number(ipVotes?.c||0)>=12)return json({error:'Troppi voti provenienti dalla stessa rete.'},429);
+    const browser=[
+      request.headers.get('User-Agent')||'',
+      request.headers.get('Accept-Language')||'',
+      request.headers.get('Sec-CH-UA-Platform')||''
+    ].join('|');
+
+    const voterHash=await voteHash(`pl-voter:${rawToken}`);
+    const ipHash=await voteHash(`pl-ip:${ip}`);
+    const browserHash=await voteHash(`pl-browser:${browser}`);
+
+    // Protezione contro votazioni automatizzate, senza penalizzare facilmente
+    // utenti diversi collegati alla stessa rete di casa o del campo.
+    const networkVotes=await env.DB.prepare(`SELECT COUNT(*) c FROM anonymous_poll_votes
+      WHERE poll_id=? AND ip_hash=?`).bind(option.poll_id,ipHash).first();
+    if(Number(networkVotes?.c||0)>=100)
+      return json({error:'Limite di sicurezza raggiunto per questa rete'},429);
+
     try{
-      await env.DB.prepare(`INSERT INTO anonymous_poll_votes(poll_id,option_id,voter_hash,ip_hash,user_agent_hash) VALUES(?,?,?,?,?)`)
-        .bind(option.poll_id,option.id,voterHash,ipHash,uaHash).run();
-    }catch{return json({error:'Hai già votato in questa votazione'},409);}
+      await env.DB.prepare(`INSERT INTO anonymous_poll_votes
+        (poll_id,option_id,voter_hash,ip_hash,browser_hash)
+        VALUES(?,?,?,?,?)`)
+        .bind(option.poll_id,option.id,voterHash,ipHash,browserHash).run();
+    }catch{
+      return json({error:'Hai già votato in questa votazione'},409);
+    }
     return json({ok:true});
   }
 
@@ -1486,7 +1522,15 @@ async function route(request, env, path) {
   }
   if (path === 'admin/polls') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    if(method==='GET') { const polls=(await env.DB.prepare(`SELECT p.*,(SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.poll_id=p.id) votes_count FROM polls p ORDER BY created_at DESC`).all()).results; for(const p of polls)p.options=(await env.DB.prepare(`SELECT o.*,(SELECT COUNT(*) FROM anonymous_poll_votes av WHERE av.option_id=o.id) votes FROM poll_options o WHERE poll_id=? ORDER BY o.id`).bind(p.id).all()).results; return json({polls}); }
+    if(method==='GET') {
+      const polls=(await env.DB.prepare(`SELECT p.*,
+        (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.poll_id=p.id) votes_count
+        FROM polls p ORDER BY created_at DESC`).all()).results;
+      for(const p of polls)p.options=(await env.DB.prepare(`SELECT o.*,
+        (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.option_id=o.id) votes
+        FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(p.id).all()).results;
+      return json({polls});
+    }
     if(method==='POST') { const d=await body(request); const r=await env.DB.prepare('INSERT INTO polls(title,description,poll_type,starts_at,ends_at,status) VALUES(?,?,?,?,?,?)').bind(d.title,d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft').run(); for(const o of (d.options||[])) if(o.label) await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(r.meta.last_row_id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run(); await audit(env,user.id,'create','poll',r.meta.last_row_id,d); return json({ok:true,id:r.meta.last_row_id},201); }
   }
 
@@ -1524,6 +1568,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureVoteSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
