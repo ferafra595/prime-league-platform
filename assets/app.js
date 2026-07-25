@@ -2143,7 +2143,150 @@ async function manageMedia(){
 }
 
 async function manageNews(){const d=await api('admin/news');const cards=d.news.map(n=>`<article class="card"><span class="pill">${n.is_published?'Pubblicata':'Bozza'}</span><h3>${esc(n.title)}</h3><p>${esc(n.excerpt||'')}</p><div class="admin-row-actions"><button class="btn small edit-news" data-id="${n.id}">Modifica</button><button class="btn small danger delete-news" data-id="${n.id}">Elimina</button></div></article>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>News</h2></div><button class="btn primary" id="new-news">Nuova news</button></div><div id="editor"></div><div class="grid two">${cards}</div>`,'news'),'');bindLogout();const form=(n={})=>`<div class="admin-editor-card"><h3>${n.id?'Modifica news':'Nuova news'}</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" value="${esc(n.title||'')}" required></div><div class="field full"><label>Riassunto</label><input class="input" name="excerpt" value="${esc(n.excerpt||'')}"></div>${mediaPicker({name:'cover_file',current:n.cover_url||'',label:'Immagine di copertina',shape:'cover'})}<div class="field full"><label>Testo</label><textarea class="input" name="body" required>${esc(n.body||'')}</textarea></div><div class="field"><label>Stato</label><select class="input" name="is_published"><option value="0" ${!n.is_published?'selected':''}>Bozza</option><option value="1" ${n.is_published?'selected':''}>Pubblicata</option></select></div><div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(n={})=>showForm('editor',form(n),async f=>{f.is_published=f.is_published==='1';await api(n.id?`admin/news/${n.id}`:'admin/news',{method:n.id?'PUT':'POST',body:JSON.stringify(f)});manageNews()});document.querySelector('#new-news').onclick=()=>open();document.querySelectorAll('.edit-news').forEach(b=>b.onclick=()=>open(d.news.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-news').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare questa news?')){await api(`admin/news/${b.dataset.id}`,{method:'DELETE'});manageNews()}})}
-async function managePolls(){const d=await api('admin/polls');const cards=d.polls.map(p=>`<article class="card"><span class="pill">${esc(p.status)}</span><h3>${esc(p.title)}</h3><div class="muted">${p.options.length} opzioni</div><div class="admin-row-actions"><button class="btn small edit-poll" data-id="${p.id}">Modifica</button><button class="btn small danger delete-poll" data-id="${p.id}">Elimina</button></div></article>`).join('');set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Gestione completa</span><h2>Votazioni</h2></div><button class="btn primary" id="new-poll">Nuova votazione</button></div><div id="editor"></div><div class="grid two">${cards}</div>`,'polls'),'');bindLogout();const form=(p={})=>`<div class="admin-editor-card"><h3>${p.id?'Modifica votazione':'Nuova votazione'}</h3><form class="form-grid"><div class="field full"><label>Titolo</label><input class="input" name="title" value="${esc(p.title||'')}" required></div><div class="field full"><label>Descrizione</label><input class="input" name="description" value="${esc(p.description||'')}"></div><div class="field"><label>Tipo</label><select class="input" name="poll_type">${['mvp','goal','save','custom'].map(x=>`<option value="${x}" ${p.poll_type===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Stato</label><select class="input" name="status">${['draft','open','closed'].map(x=>`<option value="${x}" ${p.status===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Inizio</label><input class="input" type="datetime-local" name="starts_at" value="${esc((p.starts_at||'').slice(0,16))}" required></div><div class="field"><label>Fine</label><input class="input" type="datetime-local" name="ends_at" value="${esc((p.ends_at||'').slice(0,16))}" required></div><div class="field full"><label>Opzioni, una per riga</label><textarea class="input" name="options_text" required>${esc((p.options||[]).map(o=>o.label).join('\n'))}</textarea></div><div class="field full"><button class="btn primary">Salva</button></div></form></div>`;const open=(p={})=>showForm('editor',form(p),async f=>{f.options=f.options_text.split('\n').map(label=>({label:label.trim()})).filter(x=>x.label);delete f.options_text;await api(p.id?`admin/polls/${p.id}`:'admin/polls',{method:p.id?'PUT':'POST',body:JSON.stringify(f)});managePolls()});document.querySelector('#new-poll').onclick=()=>open();document.querySelectorAll('.edit-poll').forEach(b=>b.onclick=()=>open(d.polls.find(x=>Number(x.id)===Number(b.dataset.id))));document.querySelectorAll('.delete-poll').forEach(b=>b.onclick=async()=>{if(confirm('Eliminare questa votazione e tutti i voti?')){await api(`admin/polls/${b.dataset.id}`,{method:'DELETE'});managePolls()}})}
+async function managePolls(){
+  const [data,setup]=await Promise.all([api('admin/polls'),api('admin/polls/setup-data')]);
+  const polls=data.polls||[],matches=setup.matches||[];
+  const now=Date.now();
+  const statusLabel={draft:'Bozza',open:'Pubblica',closed:'Chiusa'};
+  const typeLabel={mvp:'MVP della partita',custom:'Sondaggio libero',goal:'Miglior gol',save:'Miglior parata'};
+
+  const visibility=p=>{
+    if(p.status==='draft')return {class:'draft',label:'Non visibile: bozza'};
+    if(p.status==='closed')return {class:'closed',label:'Non visibile: chiusa'};
+    if(new Date(p.starts_at).getTime()>now)return {class:'scheduled',label:'Programmata'};
+    if(new Date(p.ends_at).getTime()<now)return {class:'expired',label:'Scaduta'};
+    if(!(p.options||[]).length)return {class:'warning',label:'Non visibile: senza opzioni'};
+    return {class:'live',label:'Visibile su Vota'};
+  };
+
+  const cards=polls.map(p=>{
+    const v=visibility(p);
+    return `<article class="poll-admin-card">
+      <div class="poll-admin-top"><span class="poll-admin-type">${esc(typeLabel[p.poll_type]||p.poll_type)}</span><span class="poll-visibility ${v.class}">${v.label}</span></div>
+      <h3>${esc(p.title)}</h3>
+      ${p.match_id?`<div class="poll-match-link">${esc(p.home_name||'')} ${p.home_score??''} – ${p.away_score??''} ${esc(p.away_name||'')}</div>`:''}
+      <div class="poll-admin-stats"><div><span>Opzioni</span><b>${p.options.length}</b></div><div><span>Voti</span><b>${p.votes_count||0}</b></div><div><span>Chiusura</span><b>${fmtDate(p.ends_at)}</b></div></div>
+      <div class="admin-row-actions"><button class="btn small edit-poll" data-id="${p.id}">Modifica</button><button class="btn small danger delete-poll" data-id="${p.id}">Elimina</button></div>
+    </article>`;
+  }).join('');
+
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Coinvolgimento pubblico</span><h2>Votazioni</h2><p>Crea votazioni collegate alle partite e controlla subito se sono visibili al pubblico.</p></div><button class="btn primary" id="new-poll">Nuova votazione</button></div>
+    <div id="editor"></div><div class="poll-admin-grid">${cards||'<div class="team-area-empty">Nessuna votazione creata.</div>'}</div>`,'polls'),'');
+  bindLogout();
+
+  const localValue=date=>{
+    const d=date?new Date(date):new Date();
+    const offset=d.getTimezoneOffset()*60000;
+    return new Date(d.getTime()-offset).toISOString().slice(0,16);
+  };
+  const defaultEnd=()=>localValue(new Date(Date.now()+48*60*60*1000));
+
+  const open=async(p={})=>{
+    const initialType=p.poll_type||'mvp';
+    const initialStatus=p.status||'open';
+    document.querySelector('#editor').innerHTML=`<div class="admin-editor-card poll-guided-editor">
+      <div class="admin-editor-head"><div><span class="eyebrow">${p.id?'Modifica':'Nuova'}</span><h3>${p.id?'Modifica votazione':'Crea una votazione'}</h3></div><button type="button" class="admin-close-editor">×</button></div>
+      <form id="poll-guided-form" class="form-grid">
+        <div class="field"><label>Tipologia</label><select class="input" name="poll_type">
+          <option value="mvp" ${initialType==='mvp'?'selected':''}>MVP della partita</option>
+          <option value="custom" ${initialType==='custom'?'selected':''}>Sondaggio libero</option>
+        </select></div>
+        <div class="field"><label>Pubblicazione</label><select class="input" name="status">
+          <option value="open" ${initialStatus==='open'?'selected':''}>Pubblica</option>
+          <option value="draft" ${initialStatus==='draft'?'selected':''}>Salva come bozza</option>
+          <option value="closed" ${initialStatus==='closed'?'selected':''}>Chiusa</option>
+        </select></div>
+
+        <div class="field full poll-match-field"><label>Partita</label><select class="input" name="match_id"><option value="">Seleziona una partita conclusa</option>${matches.map(m=>`<option value="${m.id}" ${Number(p.match_id)===Number(m.id)?'selected':''}>${esc(m.round_name||'')} · ${esc(m.home_name)} ${m.home_score??0}-${m.away_score??0} ${esc(m.away_name)} · ${fmtDate(m.match_date)}</option>`).join('')}</select><small>Sono disponibili soltanto le partite concluse. I candidati vengono presi dalle presenze ufficiali.</small></div>
+
+        <div class="field full poll-custom-title"><label>Titolo</label><input class="input" name="title" value="${esc(p.poll_type==='custom'?p.title||'':'')}" placeholder="Es. Chi vincerà la Prime League?"></div>
+        <div class="field full poll-custom-description"><label>Descrizione facoltativa</label><textarea class="input" name="description" placeholder="Una breve frase per spiegare il sondaggio">${esc(p.poll_type==='custom'?p.description||'':'')}</textarea></div>
+        <div class="field full poll-custom-options"><label>Opzioni, una per riga</label><textarea class="input" name="options_text" placeholder="Squadra A&#10;Squadra B&#10;Squadra C">${esc(p.poll_type==='custom'?(p.options||[]).map(o=>o.label).join('\n'):'')}</textarea></div>
+
+        <div class="field full poll-player-field"><label>Giocatori candidati</label><div id="poll-player-picker" class="poll-player-picker"><div class="poll-player-empty">Seleziona una partita per caricare i giocatori che hanno partecipato.</div></div><small>Seleziona almeno due candidati. Sono mostrati solo i giocatori con presenza ufficiale.</small></div>
+
+        <div class="field"><label>Apertura</label><input class="input" type="datetime-local" name="starts_at" value="${localValue(p.starts_at||new Date())}" required></div>
+        <div class="field"><label>Chiusura</label><input class="input" type="datetime-local" name="ends_at" value="${p.ends_at?localValue(p.ends_at):defaultEnd()}" required></div>
+        <div class="field full"><div class="poll-publication-help"><strong>Quando appare nella sezione Vota?</strong><span>La votazione deve essere impostata su “Pubblica”, l’orario di apertura deve essere già iniziato e la data di chiusura non deve essere superata.</span></div></div>
+        <div class="field full"><button class="btn primary">${p.id?'Salva modifiche':'Crea e pubblica'}</button></div>
+      </form></div>`;
+    document.querySelector('.admin-close-editor').onclick=()=>document.querySelector('#editor').innerHTML='';
+
+    const form=document.querySelector('#poll-guided-form');
+    const type=form.poll_type;
+    const matchSelect=form.match_id;
+    const playerPicker=document.querySelector('#poll-player-picker');
+    let selectedPlayers=new Set((p.options||[]).map(o=>Number(o.player_id)).filter(Boolean));
+    let loadedPlayers=[];
+
+    const syncType=()=>{
+      const isMvp=type.value==='mvp';
+      document.querySelector('.poll-match-field').hidden=!isMvp;
+      document.querySelector('.poll-player-field').hidden=!isMvp;
+      document.querySelector('.poll-custom-title').hidden=isMvp;
+      document.querySelector('.poll-custom-description').hidden=isMvp;
+      document.querySelector('.poll-custom-options').hidden=isMvp;
+    };
+
+    const renderPlayers=()=>{
+      if(!loadedPlayers.length){playerPicker.innerHTML='<div class="poll-player-empty">Nessun giocatore con presenza ufficiale per questa partita.</div>';return}
+      playerPicker.innerHTML=loadedPlayers.map(pl=>`<label class="poll-player-option ${selectedPlayers.has(Number(pl.id))?'selected':''}">
+        <input type="checkbox" value="${pl.id}" ${selectedPlayers.has(Number(pl.id))?'checked':''}>
+        ${avatar(pl.photo_url,`${pl.first_name} ${pl.last_name}`)}
+        <span><strong>${esc(pl.first_name)} ${esc(pl.last_name)}</strong><small>${esc(pl.team_name)} · ${pl.lineup_role==='starter'?'Titolare':'Subentrato'}</small></span>
+      </label>`).join('');
+      playerPicker.querySelectorAll('input').forEach(input=>input.onchange=()=>{
+        const id=Number(input.value);input.checked?selectedPlayers.add(id):selectedPlayers.delete(id);renderPlayers();
+      });
+    };
+
+    const loadPlayers=async()=>{
+      selectedPlayers=new Set();
+      if(!matchSelect.value){loadedPlayers=[];renderPlayers();return}
+      playerPicker.innerHTML='<div class="loader compact"></div>';
+      const d=await api(`admin/polls/matches/${matchSelect.value}/players`);
+      loadedPlayers=d.players||[];
+      if(Number(p.match_id)===Number(matchSelect.value)&&p.options?.length)selectedPlayers=new Set(p.options.map(o=>Number(o.player_id)).filter(Boolean));
+      else selectedPlayers=new Set(loadedPlayers.map(x=>Number(x.id)));
+      renderPlayers();
+    };
+
+    type.onchange=syncType;
+    matchSelect.onchange=loadPlayers;
+    syncType();
+    if(type.value==='mvp'&&matchSelect.value)await loadPlayers();
+
+    form.onsubmit=async e=>{
+      e.preventDefault();
+      const fd=new FormData(form);
+      const payload=Object.fromEntries(fd.entries());
+      if(payload.poll_type==='mvp'){
+        payload.title='';
+        payload.description='';
+        payload.options=loadedPlayers.filter(pl=>selectedPlayers.has(Number(pl.id))).map(pl=>({
+          player_id:pl.id,label:`${pl.first_name} ${pl.last_name}`,team_id:pl.team_id,image_url:pl.photo_url||''
+        }));
+      }else{
+        payload.match_id=null;
+        payload.options=String(payload.options_text||'').split('\n').map(label=>({label:label.trim()})).filter(x=>x.label);
+      }
+      delete payload.options_text;
+      try{
+        await api(p.id?`admin/polls/${p.id}`:'admin/polls',{method:p.id?'PUT':'POST',body:JSON.stringify(payload)});
+        managePolls();
+      }catch(error){alert(error.message)}
+    };
+    document.querySelector('#editor').scrollIntoView({behavior:'smooth'});
+  };
+
+  document.querySelector('#new-poll').onclick=()=>open();
+  document.querySelectorAll('.edit-poll').forEach(btn=>btn.onclick=()=>open(polls.find(p=>Number(p.id)===Number(btn.dataset.id))));
+  document.querySelectorAll('.delete-poll').forEach(btn=>btn.onclick=async()=>{
+    if(confirm('Eliminare definitivamente la votazione e tutti i voti?')){
+      await api(`admin/polls/${btn.dataset.id}`,{method:'DELETE'});managePolls();
+    }
+  });
+}
 
 async function loadUser(){try{state.user=(await api('me')).user}catch{state.user=null}}
 
