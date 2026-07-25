@@ -291,6 +291,7 @@ async function ensureAnonymousVoteSchema(env){
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_option ON anonymous_poll_votes(option_id)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_anonymous_votes_ip ON anonymous_poll_votes(poll_id,ip_hash)`)
   ]);
+  try{await env.DB.prepare(`ALTER TABLE polls ADD COLUMN match_id INTEGER`).run()}catch{}
 }
 
 async function route(request, env, path) {
@@ -1520,18 +1521,102 @@ async function route(request, env, path) {
     if(method==='GET') return json({news:(await env.DB.prepare('SELECT * FROM news ORDER BY created_at DESC').all()).results});
     if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO news(title,slug,excerpt,body,cover_url,is_published,published_at) VALUES(?,?,?,?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END)').bind(d.title,slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',d.is_published?1:0,d.is_published?1:0).run(); await audit(env,user.id,'create','news',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
   }
+  if (path === 'admin/polls/setup-data' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const matches=(await env.DB.prepare(`SELECT m.id,m.match_date,m.round_name,m.status,m.home_score,m.away_score,
+      ht.name home_name,at.name away_name,
+      (SELECT COUNT(*) FROM match_lineups ml WHERE ml.match_id=m.id AND ml.played=1) played_count
+      FROM matches m
+      JOIN teams ht ON ht.id=m.home_team_id
+      JOIN teams at ON at.id=m.away_team_id
+      WHERE m.status='published'
+      ORDER BY datetime(m.match_date) DESC`).all()).results;
+    return json({matches});
+  }
+
+  if (path.match(/^admin\/polls\/matches\/\d+\/players$/) && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const matchId=Number(path.split('/')[3]);
+    const match=await env.DB.prepare(`SELECT m.id,m.home_team_id,m.away_team_id,m.match_date,m.round_name,
+      ht.name home_name,at.name away_name
+      FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+      WHERE m.id=?`).bind(matchId).first();
+    if(!match)return json({error:'Partita non trovata'},404);
+    const players=(await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.photo_url,p.shirt_number,p.role,
+      p.team_id,t.name team_name,t.logo_url team_logo,ml.lineup_role
+      FROM match_lineups ml
+      JOIN players p ON p.id=ml.player_id
+      JOIN teams t ON t.id=ml.team_id
+      WHERE ml.match_id=? AND ml.played=1
+      ORDER BY ml.team_id,p.last_name,p.first_name`).bind(matchId).all()).results;
+    return json({match,players});
+  }
+
   if (path === 'admin/polls') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
     if(method==='GET') {
       const polls=(await env.DB.prepare(`SELECT p.*,
+        m.home_score,m.away_score,ht.name home_name,at.name away_name,m.match_date,
         (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.poll_id=p.id) votes_count
-        FROM polls p ORDER BY created_at DESC`).all()).results;
+        FROM polls p
+        LEFT JOIN matches m ON m.id=p.match_id
+        LEFT JOIN teams ht ON ht.id=m.home_team_id
+        LEFT JOIN teams at ON at.id=m.away_team_id
+        ORDER BY p.created_at DESC`).all()).results;
       for(const p of polls)p.options=(await env.DB.prepare(`SELECT o.*,
         (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.option_id=o.id) votes
         FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(p.id).all()).results;
       return json({polls});
     }
-    if(method==='POST') { const d=await body(request); const r=await env.DB.prepare('INSERT INTO polls(title,description,poll_type,starts_at,ends_at,status) VALUES(?,?,?,?,?,?)').bind(d.title,d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft').run(); for(const o of (d.options||[])) if(o.label) await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(r.meta.last_row_id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run(); await audit(env,user.id,'create','poll',r.meta.last_row_id,d); return json({ok:true,id:r.meta.last_row_id},201); }
+    if(method==='POST') {
+      const d=await body(request);
+      const type=['mvp','custom','goal','save'].includes(d.poll_type)?d.poll_type:'custom';
+      const matchId=d.match_id?Number(d.match_id):null;
+      let options=Array.isArray(d.options)?d.options:[];
+      let title=String(d.title||'').trim();
+      let description=String(d.description||'').trim();
+
+      if(type==='mvp'){
+        if(!matchId)return json({error:'Seleziona la partita per la votazione MVP'},400);
+        const match=await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name
+          FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+          WHERE m.id=? AND m.status='published'`).bind(matchId).first();
+        if(!match)return json({error:'La partita selezionata non è conclusa'},400);
+        const eligible=(await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.photo_url,p.team_id
+          FROM match_lineups ml JOIN players p ON p.id=ml.player_id
+          WHERE ml.match_id=? AND ml.played=1 ORDER BY p.last_name`).bind(matchId).all()).results;
+        const selectedIds=new Set(options.map(o=>Number(o.player_id)).filter(Boolean));
+        const selected=eligible.filter(p=>selectedIds.has(Number(p.id)));
+        if(selected.length<2)return json({error:'Seleziona almeno due giocatori che hanno partecipato alla partita'},400);
+        options=selected.map(p=>({
+          label:`${p.first_name} ${p.last_name}`,
+          player_id:p.id,team_id:p.team_id,image_url:p.photo_url||''
+        }));
+        title=title||`MVP · ${match.home_name} - ${match.away_name}`;
+        description=description||'Scegli il miglior giocatore della partita.';
+      }else{
+        if(!title)return json({error:'Inserisci il titolo della votazione'},400);
+        options=options.filter(o=>String(o.label||'').trim());
+        if(options.length<2)return json({error:'Inserisci almeno due opzioni'},400);
+      }
+
+      const status=['draft','open','closed'].includes(d.status)?d.status:'open';
+      const startsAt=d.starts_at||new Date().toISOString().slice(0,19);
+      const endsAt=d.ends_at;
+      if(!endsAt)return json({error:'Inserisci la data di chiusura'},400);
+
+      const r=await env.DB.prepare(`INSERT INTO polls
+        (title,description,poll_type,starts_at,ends_at,status,match_id)
+        VALUES(?,?,?,?,?,?,?)`)
+        .bind(title,description,type,startsAt,endsAt,status,matchId).run();
+
+      for(const o of options)await env.DB.prepare(`INSERT INTO poll_options
+        (poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)`)
+        .bind(r.meta.last_row_id,String(o.label).trim(),o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();
+
+      await audit(env,user.id,'create','poll',r.meta.last_row_id,d);
+      return json({ok:true,id:r.meta.last_row_id},201);
+    }
   }
 
   // Full Admin CRUD: every platform entity can be created, edited and deleted only by Admin/Organizer.
@@ -1559,7 +1644,45 @@ async function route(request, env, path) {
   }
   if (path.match(/^admin\/polls\/\d+$/)) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
-    if(method==='PUT'){await env.DB.prepare('UPDATE polls SET title=?,description=?,poll_type=?,starts_at=?,ends_at=?,status=? WHERE id=?').bind(safeText(d.title),d.description||'',d.poll_type||'custom',d.starts_at,d.ends_at,d.status||'draft',id).run();await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM anonymous_poll_votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();for(const o of (d.options||[]))if(o.label)await env.DB.prepare('INSERT INTO poll_options(poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)').bind(id,o.label,o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();await audit(env,user.id,'update','poll',id,d);return json({ok:true});}
+    if(method==='PUT'){
+      const type=['mvp','custom','goal','save'].includes(d.poll_type)?d.poll_type:'custom';
+      const matchId=d.match_id?Number(d.match_id):null;
+      let options=Array.isArray(d.options)?d.options:[];
+      let title=String(d.title||'').trim();
+      let description=String(d.description||'').trim();
+
+      if(type==='mvp'){
+        if(!matchId)return json({error:'Seleziona una partita'},400);
+        const match=await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name
+          FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+          WHERE m.id=? AND m.status='published'`).bind(matchId).first();
+        if(!match)return json({error:'Partita non valida'},400);
+        const eligible=(await env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,p.photo_url,p.team_id
+          FROM match_lineups ml JOIN players p ON p.id=ml.player_id
+          WHERE ml.match_id=? AND ml.played=1`).bind(matchId).all()).results;
+        const selectedIds=new Set(options.map(o=>Number(o.player_id)).filter(Boolean));
+        const selected=eligible.filter(p=>selectedIds.has(Number(p.id)));
+        if(selected.length<2)return json({error:'Seleziona almeno due giocatori'},400);
+        options=selected.map(p=>({label:`${p.first_name} ${p.last_name}`,player_id:p.id,team_id:p.team_id,image_url:p.photo_url||''}));
+        title=title||`MVP · ${match.home_name} - ${match.away_name}`;
+        description=description||'Scegli il miglior giocatore della partita.';
+      }else{
+        if(!title)return json({error:'Inserisci il titolo'},400);
+        options=options.filter(o=>String(o.label||'').trim());
+        if(options.length<2)return json({error:'Inserisci almeno due opzioni'},400);
+      }
+
+      await env.DB.prepare(`UPDATE polls SET title=?,description=?,poll_type=?,starts_at=?,ends_at=?,status=?,match_id=? WHERE id=?`)
+        .bind(title,description,type,d.starts_at,d.ends_at,d.status||'open',matchId,id).run();
+      await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();
+      await env.DB.prepare('DELETE FROM anonymous_poll_votes WHERE poll_id=?').bind(id).run();
+      await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();
+      for(const o of options)await env.DB.prepare(`INSERT INTO poll_options
+        (poll_id,label,image_url,player_id,team_id) VALUES(?,?,?,?,?)`)
+        .bind(id,String(o.label).trim(),o.image_url||'',o.player_id?Number(o.player_id):null,o.team_id?Number(o.team_id):null).run();
+      await audit(env,user.id,'update','poll',id,d);
+      return json({ok:true});
+    }
     if(method==='DELETE'){await env.DB.prepare('DELETE FROM votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM anonymous_poll_votes WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM poll_options WHERE poll_id=?').bind(id).run();await env.DB.prepare('DELETE FROM polls WHERE id=?').bind(id).run();await audit(env,user.id,'delete','poll',id,{});return json({ok:true});}
   }
 
