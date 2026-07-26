@@ -2161,11 +2161,34 @@ async function managePolls(){
 
   const cards=polls.map(p=>{
     const v=visibility(p);
+    const total=Number(p.votes_count||0);
+    const ranking=[...(p.options||[])].sort((a,b)=>Number(b.votes||0)-Number(a.votes||0));
+    const results=ranking.map((o,index)=>{
+      const votes=Number(o.votes||0);
+      const percentage=total?Math.round(votes/total*100):0;
+      return `<div class="poll-result-row ${index===0&&votes>0?'leader':''}">
+        <div class="poll-result-name">
+          <span class="poll-result-rank">${index+1}</span>
+          ${o.image_url?`<img src="${esc(o.image_url)}" alt="${esc(o.label)}">`:`<span class="poll-result-avatar">${esc(initials(o.label))}</span>`}
+          <strong>${esc(o.label)}</strong>
+        </div>
+        <div class="poll-result-data">
+          <span class="poll-result-bar"><i style="width:${percentage}%"></i></span>
+          <b>${votes}</b>
+          <small>${percentage}%</small>
+        </div>
+      </div>`;
+    }).join('');
+
     return `<article class="poll-admin-card">
       <div class="poll-admin-top"><span class="poll-admin-type">${esc(typeLabel[p.poll_type]||p.poll_type)}</span><span class="poll-visibility ${v.class}">${v.label}</span></div>
       <h3>${esc(p.title)}</h3>
       ${p.match_id?`<div class="poll-match-link">${esc(p.home_name||'')} ${p.home_score??''} – ${p.away_score??''} ${esc(p.away_name||'')}</div>`:''}
-      <div class="poll-admin-stats"><div><span>Opzioni</span><b>${p.options.length}</b></div><div><span>Voti</span><b>${p.votes_count||0}</b></div><div><span>Chiusura</span><b>${fmtDate(p.ends_at)}</b></div></div>
+      <div class="poll-admin-stats"><div><span>Opzioni</span><b>${p.options.length}</b></div><div><span>Voti totali</span><b>${total}</b></div><div><span>Chiusura</span><b>${fmtDate(p.ends_at)}</b></div></div>
+      <div class="poll-results-admin">
+        <div class="poll-results-head"><strong>Risultati</strong><span>Solo Admin</span></div>
+        ${results||'<div class="poll-results-empty">Nessun candidato disponibile.</div>'}
+      </div>
       <div class="admin-row-actions"><button class="btn small edit-poll" data-id="${p.id}">Modifica</button><button class="btn small danger delete-poll" data-id="${p.id}">Elimina</button></div>
     </article>`;
   }).join('');
