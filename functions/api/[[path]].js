@@ -712,8 +712,7 @@ async function route(request, env, path) {
     const rawToken=String(request.headers.get('x-prime-voter')||'').trim();
     const voterHash=rawToken.length>=32?await voteHash(`pl-voter:${rawToken}`):'';
 
-    const polls=(await env.DB.prepare(`SELECT p.*,
-      (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.poll_id=p.id) votes_count
+    const polls=(await env.DB.prepare(`SELECT p.*
       FROM polls p
       WHERE p.status IN ('open','closed')
         AND datetime(p.starts_at)<=datetime('now')
@@ -723,8 +722,7 @@ async function route(request, env, path) {
 
     for(const poll of polls){
       poll.is_open=poll.status==='open' && new Date(poll.ends_at).getTime()>=Date.now();
-      poll.options=(await env.DB.prepare(`SELECT o.*,
-        (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.option_id=o.id) votes
+      poll.options=(await env.DB.prepare(`SELECT o.*
         FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(poll.id).all()).results;
 
       poll.user_voted=false;
