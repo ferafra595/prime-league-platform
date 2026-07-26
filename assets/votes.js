@@ -71,12 +71,7 @@ function pollType(type){
 }
 
 function pollCard(poll){
-  const total=Number(poll.votes_count||0);
-  const showResults=Boolean(poll.user_voted)||!poll.is_open;
-
   const options=(poll.options||[]).map(option=>{
-    const votes=Number(option.votes||0);
-    const percentage=total?Math.round(votes/total*100):0;
     const selected=Number(poll.selected_option_id)===Number(option.id);
 
     return `<button class="pl-vote-option ${selected?'is-selected':''}"
@@ -88,10 +83,7 @@ function pollCard(poll){
       </span>
       <span class="pl-vote-copy">
         <strong>${escapeHtml(option.label)}</strong>
-        ${showResults?`
-          <span class="pl-vote-progress"><i style="width:${percentage}%"></i></span>
-          <small>${percentage}% · ${votes} ${votes===1?'voto':'voti'}</small>
-        `:'<small>Seleziona per votare</small>'}
+        <small>${selected?'La tua scelta':poll.user_voted?'Votazione già effettuata':poll.is_open?'Seleziona per votare':'Votazione conclusa'}</small>
       </span>
       ${selected?'<span class="pl-vote-selected">✓</span>':''}
     </button>`;
@@ -112,8 +104,8 @@ function pollCard(poll){
     <div class="pl-vote-options">${options}</div>
 
     <footer class="pl-poll-footer">
-      <span><b>${total}</b> ${total===1?'voto espresso':'voti espressi'}</span>
-      <span>${poll.is_open?`Chiusura: ${formatDate(poll.ends_at)}`:'Risultato finale'}</span>
+      <span>${poll.is_open?'Puoi esprimere una sola preferenza':'Votazione terminata'}</span>
+      <span>${poll.is_open?`Chiusura: ${formatDate(poll.ends_at)}`:'Risultato riservato alla direzione'}</span>
     </footer>
 
     ${poll.user_voted?`
@@ -147,7 +139,7 @@ async function draw(){
           <p>Scegli il protagonista della giornata. Non serve registrarsi e puoi votare una sola volta per ogni sondaggio.</p>
           <div class="pl-votes-hero-stats">
             <div><b>${open.length}</b><span>Votazioni aperte</span></div>
-            <div><b>${polls.reduce((sum,p)=>sum+Number(p.votes_count||0),0)}</b><span>Voti raccolti</span></div>
+            <div><b>1</b><span>Voto per persona</span></div>
           </div>
         </div>
         <div class="pl-votes-hero-mark">★</div>
