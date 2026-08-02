@@ -427,7 +427,7 @@ async function competitions(seasonId=''){
     };
   }
   if(!d.season){
-    set(shell('<div class="competitions-empty">Nessuna stagione disponibile.</div>','competizioni'));
+    set('<div class="competitions-empty">Nessuna stagione disponibile.</div>','competizioni');
     return;
   }
 
@@ -454,7 +454,7 @@ async function competitions(seasonId=''){
   const winner=d.mini_tournament.winner;
   const regularProgress=d.regular.total?Math.round(d.regular.completed/d.regular.total*100):0;
 
-  set(shell(`<div class="competitions-page">
+  set(`<div class="competitions-page">
     <section class="competitions-hero">
       <div><span>Prime League</span><h1>Competizioni</h1><p>Campionato, mini torneo premio e tutte le future competizioni della lega in un unico spazio.</p></div>
       <div class="competition-season-select"><label>Stagione</label><select id="competition-season">${(d.seasons||[]).map(s=>`<option value="${s.id}" ${Number(s.id)===Number(d.season.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
@@ -495,7 +495,7 @@ async function competitions(seasonId=''){
         <article><span>🌍</span><h3>Qualificazioni CSI</h3><p>Percorso verso le competizioni nazionali.</p><b>Prossimamente</b></article>
       </div>
     </section>
-  </div>`,'competizioni'));
+  </div>`,'competizioni');
 
   document.querySelector('#competition-season').onchange=e=>competitions(e.target.value);
 }
