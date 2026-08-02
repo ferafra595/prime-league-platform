@@ -449,70 +449,104 @@ async function route(request, env, path) {
 
   if (path === 'public/home') return json(await publicDashboard(env));
   if (path === 'public/competitions' && method==='GET') {
-    const seasonIdParam=new URL(request.url).searchParams.get('season');
-    const tableData=await standings(env,seasonIdParam?Number(seasonIdParam):null);
-    const season=tableData.selectedSeason;
-    if(!season)return json({season:null,seasons:tableData.seasons,standings:[],regular:{},mini_tournament:{semifinals:[],final:null}});
+    try{
+      const seasonIdParam=new URL(request.url).searchParams.get('season');
+      const tableData=await standings(env,seasonIdParam?Number(seasonIdParam):null);
+      const season=tableData.selectedSeason;
 
-    const regularCounts=await env.DB.prepare(`SELECT
-      COUNT(*) total,
-      COALESCE(SUM(CASE WHEN m.status='published' THEN 1 ELSE 0 END),0) completed
-      FROM matches m
-      LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=? AND COALESCE(msm.phase,'regular')='regular'`).bind(season.id).first();
-
-    const phaseMatches=(await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,
-      at.name away_name,at.logo_url away_logo,msm.phase,msm.schedule_status
-      FROM matches m
-      JOIN match_schedule_meta msm ON msm.match_id=m.id
-      JOIN teams ht ON ht.id=m.home_team_id
-      JOIN teams at ON at.id=m.away_team_id
-      WHERE m.season_id=? AND msm.phase IN ('semifinal','final','playoff')
-      ORDER BY CASE msm.phase WHEN 'semifinal' THEN 1 WHEN 'playoff' THEN 2 ELSE 3 END,
-        datetime(m.match_date),m.id`).bind(season.id).all()).results;
-
-    const semifinals=phaseMatches.filter(m=>m.phase==='semifinal');
-    const finalMatch=phaseMatches.find(m=>m.phase==='final')||null;
-    const regularFinished=Number(regularCounts?.total||0)>0 &&
-      Number(regularCounts?.completed||0)===Number(regularCounts?.total||0);
-
-    const champion=regularFinished&&tableData.standings.length
-      ? tableData.standings[0]
-      : null;
-
-    let miniStatus='not_started';
-    if(semifinals.length)miniStatus='semifinals';
-    if(semifinals.length===2&&semifinals.every(m=>m.status==='published'))miniStatus='awaiting_final';
-    if(finalMatch)miniStatus=finalMatch.status==='published'?'completed':'final';
-
-    let miniWinner=null;
-    if(finalMatch&&finalMatch.status==='published'&&Number(finalMatch.home_score)!==Number(finalMatch.away_score)){
-      const homeWon=Number(finalMatch.home_score)>Number(finalMatch.away_score);
-      miniWinner={
-        id:homeWon?finalMatch.home_team_id:finalMatch.away_team_id,
-        name:homeWon?finalMatch.home_name:finalMatch.away_name,
-        logo_url:homeWon?finalMatch.home_logo:finalMatch.away_logo
-      };
-    }
-
-    return json({
-      season,
-      seasons:tableData.seasons,
-      standings:tableData.standings,
-      regular:{
-        total:Number(regularCounts?.total||0),
-        completed:Number(regularCounts?.completed||0),
-        finished:regularFinished,
-        champion
-      },
-      mini_tournament:{
-        status:miniStatus,
-        semifinals,
-        final:finalMatch,
-        winner:miniWinner,
-        qualified:tableData.standings.slice(1,5)
+      if(!season){
+        return json({
+          season:null,
+          seasons:tableData.seasons||[],
+          standings:[],
+          regular:{total:0,completed:0,finished:false,champion:null},
+          mini_tournament:{status:'not_started',semifinals:[],final:null,winner:null,qualified:[]}
+        });
       }
-    });
+
+      const regularCounts=await env.DB.prepare(`SELECT
+        COUNT(*) total,
+        COALESCE(SUM(CASE WHEN m.status='published' THEN 1 ELSE 0 END),0) completed
+        FROM matches m
+        LEFT JOIN match_schedule_meta meta ON meta.match_id=m.id
+        WHERE m.season_id=?
+          AND COALESCE(meta.phase,'regular')='regular'`)
+        .bind(season.id).first();
+
+      const phaseRows=(await env.DB.prepare(`SELECT
+        m.*,
+        ht.name home_name,ht.logo_url home_logo,
+        at.name away_name,at.logo_url away_logo,
+        COALESCE(meta.phase,
+          CASE
+            WHEN lower(COALESCE(m.round_name,'')) LIKE '%semifinale%' THEN 'semifinal'
+            WHEN lower(COALESCE(m.round_name,'')) LIKE '%finale%' THEN 'final'
+            ELSE 'regular'
+          END
+        ) phase
+        FROM matches m
+        JOIN teams ht ON ht.id=m.home_team_id
+        JOIN teams at ON at.id=m.away_team_id
+        LEFT JOIN match_schedule_meta meta ON meta.match_id=m.id
+        WHERE m.season_id=?
+        ORDER BY datetime(m.match_date),m.id`).bind(season.id).all()).results;
+
+      const semifinals=phaseRows.filter(row=>row.phase==='semifinal');
+      const finalMatch=phaseRows.find(row=>row.phase==='final')||null;
+
+      const total=Number(regularCounts?.total||0);
+      const completed=Number(regularCounts?.completed||0);
+      const regularFinished=total>0&&total===completed;
+      const champion=regularFinished&&tableData.standings?.length
+        ? tableData.standings[0]
+        : null;
+
+      let miniStatus='not_started';
+      if(semifinals.length)miniStatus='semifinals';
+      if(semifinals.length>=2&&semifinals.every(match=>match.status==='published'))
+        miniStatus='awaiting_final';
+      if(finalMatch)
+        miniStatus=finalMatch.status==='published'?'completed':'final';
+
+      let miniWinner=null;
+      if(
+        finalMatch &&
+        finalMatch.status==='published' &&
+        Number(finalMatch.home_score)!==Number(finalMatch.away_score)
+      ){
+        const homeWon=Number(finalMatch.home_score)>Number(finalMatch.away_score);
+        miniWinner={
+          id:homeWon?finalMatch.home_team_id:finalMatch.away_team_id,
+          name:homeWon?finalMatch.home_name:finalMatch.away_name,
+          logo_url:homeWon?finalMatch.home_logo:finalMatch.away_logo
+        };
+      }
+
+      return json({
+        season,
+        seasons:tableData.seasons||[],
+        standings:tableData.standings||[],
+        regular:{
+          total,
+          completed,
+          finished:regularFinished,
+          champion
+        },
+        mini_tournament:{
+          status:miniStatus,
+          semifinals,
+          final:finalMatch,
+          winner:miniWinner,
+          qualified:(tableData.standings||[]).slice(1,5)
+        }
+      });
+    }catch(error){
+      console.error('public/competitions failed',error);
+      return json({
+        error:'Impossibile caricare la sezione Competizioni',
+        detail:error?.message||String(error)
+      },500);
+    }
   }
 
   if (path === 'admin/competitions' && method==='GET') {
