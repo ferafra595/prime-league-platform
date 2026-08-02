@@ -1,0 +1,9 @@
+
+/* Regolamento sportivo Prime League */
+.qualification-badge.finalist{background:#fff1c7!important;color:#7b5600!important}
+.qualification-badge.playoff{background:#eaf2ff!important;color:#1556b8!important}
+.standing-row.league-champion,.standing-mobile-card.league-champion{box-shadow:inset 4px 0 0 #d6a900}
+.standing-row.prize-tournament,.standing-mobile-card.prize-tournament{box-shadow:inset 4px 0 0 #1768e8}
+.calendar-rule-info{margin:12px 0 18px;padding:14px 16px;border-radius:14px;background:#edf5ff;border:1px solid #cbdcf5;color:#244c7d}
+.calendar-rule-info strong{font-size:12px}.calendar-rule-info p{margin:5px 0 0;font-size:12px;line-height:1.5}
+@media(max-width:650px){.qualification-legend{display:flex;flex-direction:column;align-items:flex-start!important}}

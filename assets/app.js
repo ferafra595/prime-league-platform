@@ -346,14 +346,14 @@ async function matchDetail(id){
   if(share)share.onclick=async()=>{const data={title:`${m.home_name} - ${m.away_name}`,text:`Prime League: ${m.home_name} ${published?m.home_score+'-'+m.away_score:'vs'} ${m.away_name}`,url:location.href};if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(location.href);share.textContent='Link copiato'}};
 }
 function qualificationLabel(index){
-  if(index===0)return '<span class="qualification-badge finalist">Finalista diretta</span>';
-  if(index>=1&&index<=4)return '<span class="qualification-badge playoff">Playoff</span>';
+  if(index===0)return '<span class="qualification-badge finalist">Campione Prime League</span>';
+  if(index>=1&&index<=4)return '<span class="qualification-badge playoff">Mini torneo premio</span>';
   return '';
 }
 function gdClass(value){return Number(value)>0?'positive':Number(value)<0?'negative':'neutral'}
 function premiumStandings(rows){
-  return `<div class="standings-desktop"><div class="premium-table-wrap"><table class="premium-table"><thead><tr><th>Pos.</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>PT</th></tr></thead><tbody>${rows.map((t,i)=>`<tr class="standing-row ${i===0?'direct-finalist':i<=4?'playoff-zone':''}" data-href="#/squadra/${t.slug}" tabindex="0"><td><span class="position-number">${i+1}</span></td><td><div class="standing-team">${logo(t.logo_url,t.name)}<div><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div></div></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td><span class="goal-difference ${gdClass(t.gd)}">${Number(t.gd)>0?'+':''}${t.gd}</span></td><td><span class="points-value">${t.points}</span></td></tr>`).join('')}</tbody></table></div></div>
-  <div class="standings-mobile">${rows.map((t,i)=>`<a class="standing-mobile-card ${i===0?'direct-finalist':i<=4?'playoff-zone':''}" href="#/squadra/${t.slug}"><div class="standing-mobile-head"><span class="position-number">${i+1}</span>${logo(t.logo_url,t.name)}<div class="standing-mobile-name"><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div><span class="mobile-points"><b>${t.points}</b><small>PT</small></span></div><div class="standing-mobile-stats"><span><b>${t.played}</b><small>PG</small></span><span><b>${t.won}</b><small>V</small></span><span><b>${t.drawn}</b><small>N</small></span><span><b>${t.lost}</b><small>P</small></span><span><b>${t.gf}</b><small>GF</small></span><span><b>${t.ga}</b><small>GS</small></span><span class="${gdClass(t.gd)}"><b>${Number(t.gd)>0?'+':''}${t.gd}</b><small>DR</small></span></div></a>`).join('')}</div>`;
+  return `<div class="standings-desktop"><div class="premium-table-wrap"><table class="premium-table"><thead><tr><th>Pos.</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>PT</th></tr></thead><tbody>${rows.map((t,i)=>`<tr class="standing-row ${i===0?'league-champion direct-finalist':i<=4?'prize-tournament playoff-zone':''}" data-href="#/squadra/${t.slug}" tabindex="0"><td><span class="position-number">${i+1}</span></td><td><div class="standing-team">${logo(t.logo_url,t.name)}<div><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div></div></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td><span class="goal-difference ${gdClass(t.gd)}">${Number(t.gd)>0?'+':''}${t.gd}</span></td><td><span class="points-value">${t.points}</span></td></tr>`).join('')}</tbody></table></div></div>
+  <div class="standings-mobile">${rows.map((t,i)=>`<a class="standing-mobile-card ${i===0?'league-champion direct-finalist':i<=4?'prize-tournament playoff-zone':''}" href="#/squadra/${t.slug}"><div class="standing-mobile-head"><span class="position-number">${i+1}</span>${logo(t.logo_url,t.name)}<div class="standing-mobile-name"><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div><span class="mobile-points"><b>${t.points}</b><small>PT</small></span></div><div class="standing-mobile-stats"><span><b>${t.played}</b><small>PG</small></span><span><b>${t.won}</b><small>V</small></span><span><b>${t.drawn}</b><small>N</small></span><span><b>${t.lost}</b><small>P</small></span><span><b>${t.gf}</b><small>GF</small></span><span><b>${t.ga}</b><small>GS</small></span><span class="${gdClass(t.gd)}"><b>${Number(t.gd)>0?'+':''}${t.gd}</b><small>DR</small></span></div></a>`).join('')}</div>`;
 }
 async function table(seasonId=''){
   loading();
@@ -361,7 +361,7 @@ async function table(seasonId=''){
   const season=d.selectedSeason||{};
   const options=(d.seasons||[]).map(s=>`<option value="${s.id}" ${Number(s.id)===Number(season.id)?'selected':''}>${esc(s.name)}</option>`).join('');
   set(`<section class="standings-hero"><div><span class="eyebrow light">Classifica ufficiale</span><h1>Prime League</h1><p>Posizioni e risultati aggiornati automaticamente dopo la pubblicazione di ogni partita.</p></div><div class="season-selector-card"><label for="standings-season">Stagione</label><select id="standings-season" class="input">${options}</select><small>Consulta anche le classifiche delle stagioni precedenti.</small></div></section>
-  <section class="standings-content"><div class="standings-title-row"><div><span class="eyebrow">${esc(season.competition_name||'Prime League')}</span><h2>Classifica ${esc(season.name||'')}</h2></div><div class="qualification-legend"><span><i class="legend-finalist"></i>Finalista diretta</span><span><i class="legend-playoff"></i>Qualificazione playoff</span></div></div>
+  <section class="standings-content"><div class="standings-title-row"><div><span class="eyebrow">${esc(season.competition_name||'Prime League')}</span><h2>Classifica ${esc(season.name||'')}</h2></div><div class="qualification-legend"><span><i class="legend-finalist"></i>Campione e vincitrice della coppa</span><span><i class="legend-playoff"></i>Dal 2º al 5º: mini torneo premio</span></div></div>
   ${d.standings?.length?premiumStandings(d.standings):'<div class="card empty">Nessun risultato disponibile per questa stagione.</div>'}</section>`,'classifica');
   const selector=document.querySelector('#standings-season'); if(selector)selector.onchange=()=>table(selector.value);
   document.querySelectorAll('.standing-row').forEach(row=>{const open=()=>location.hash=row.dataset.href;row.onclick=open;row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}}});
@@ -1207,14 +1207,14 @@ async function managePlayers(){
   document.querySelectorAll('.delete-player').forEach(btn=>btn.onclick=async()=>{if(confirm('Eliminare definitivamente questo giocatore?')){await api(`admin/players/${btn.dataset.id}`,{method:'DELETE'});managePlayers()}});
   apply();
 }
-async function manageCalendar(){
+async function manageCalendar(){if(!document.querySelector('link[data-prime-competition-rules]')){const l=document.createElement('link');l.rel='stylesheet';l.href='/assets/competition-rules.css';l.dataset.primeCompetitionRules='1';document.head.appendChild(l)}
   await loadTeams();
   const isAdmin=['super_admin','organizer'].includes(state.user.role);
   const endpoint=isAdmin?'admin/matches':'team/matches';
   const d=await api(endpoint);
   const matches=[...(d.matches||[])].sort((a,b)=>new Date(a.match_date)-new Date(b.match_date));
   const statusLabels={scheduled:'In programma',postponed:'Rinviata',suspended:'Sospesa',recovery:'Da recuperare',cancelled:'Annullata',completed:'Conclusa'};
-  const phaseLabels={regular:'Regular season',playoff:'Playoff',semifinal:'Semifinale',final:'Finale'};
+  const phaseLabels={regular:'Campionato',playoff:'Mini torneo premio',semifinal:'Semifinale premio',final:'Finale premio'};
   const seasonOptions=(d.seasons||[]).map(s=>`<option value="${s.id}" ${s.is_current?'selected':''}>${esc(s.name)}</option>`).join('');
   const teamOpts=state.teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
 
@@ -1226,7 +1226,7 @@ async function manageCalendar(){
     document.head.appendChild(link);
   }
 
-  const adminTools=isAdmin?`<section class="calendar-admin-tools"><div class="admin-panel-head"><div><span class="eyebrow">Gestione calendario</span><h2>Calendario campionato</h2><p>Visualizza le gare per mese, settimana o giorno e modifica qualsiasi partita direttamente dal calendario.</p></div></div><div class="calendar-actions"><button class="btn primary" id="generate-calendar">Genera calendario</button><button class="btn" id="new-match">Nuova partita</button><button class="btn" id="new-finals">Aggiungi playoff/finale</button><button class="btn danger" id="delete-calendar">Elimina calendario</button></div></section>`:'';
+  const adminTools=isAdmin?`<section class="calendar-admin-tools"><div class="admin-panel-head"><div><span class="eyebrow">Gestione calendario</span><h2>Calendario campionato</h2><p>Visualizza le gare per mese, settimana o giorno e modifica qualsiasi partita direttamente dal calendario.</p></div></div><div class="calendar-actions"><button class="btn primary" id="generate-calendar">Genera calendario</button><button class="btn" id="new-match">Nuova partita</button><button class="btn" id="new-finals">Mini torneo premio</button><button class="btn danger" id="delete-calendar">Elimina calendario</button></div></section>`:'';
 
   set(dashLayout(`${adminTools}<div id="editor"></div>
     <section class="gcal-shell">
@@ -1341,7 +1341,31 @@ async function manageCalendar(){
   if(isAdmin){
     document.querySelector('#new-match').onclick=()=>openMatchForm();
     document.querySelector('#generate-calendar').onclick=()=>showForm('editor',`<div class="admin-editor-card"><h3>Genera calendario automatico</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Data inizio</label><input class="input" type="date" name="start_date" required></div><div class="field"><label>Data finale indicativa</label><input class="input" type="date" name="end_date"></div><div class="field"><label>Massimo partite per sera</label><select class="input" name="max_per_day"><option>1</option><option>2</option><option selected>3</option></select></div><div class="field"><label>Pausa mercato (giorni)</label><input class="input" type="number" min="0" name="market_break_days" value="20"></div><div class="field full"><label>Squadre partecipanti</label><div class="calendar-team-checks">${state.teams.map(t=>`<label><input type="checkbox" name="team_ids" value="${t.id}" checked> ${esc(t.name)}</label>`).join('')}</div></div><div class="field full"><label>Giorni principali</label><div class="calendar-team-checks"><label><input type="checkbox" name="allowed_days" value="3" checked> Mercoledì</label><label><input type="checkbox" name="allowed_days" value="4" checked> Giovedì</label><label><input type="checkbox" name="allowed_days" value="5" checked> Venerdì</label></div></div><div class="field full"><label>Orari</label><input class="input" name="times_text" value="19:00,20:00,21:00"></div><div class="field full"><label>Campo predefinito</label><input class="input" name="venue"></div><div class="field full"><label class="admin-check"><input type="checkbox" name="replace_existing" value="1"> Sostituisci eventuale calendario già presente</label></div><div class="field full"><button class="btn primary" type="submit">Genera andata e ritorno</button></div></form></div>`,async(_,form)=>{const fd=new FormData(form);const teamIds=fd.getAll('team_ids');const allowedDays=fd.getAll('allowed_days');const times=String(fd.get('times_text')||'').split(',').map(x=>x.trim()).filter(Boolean);if(teamIds.length<2)throw new Error('Seleziona almeno due squadre');const r=await api('admin/calendar/generate',{method:'POST',body:JSON.stringify({season_id:fd.get('season_id'),start_date:fd.get('start_date'),end_date:fd.get('end_date'),max_per_day:fd.get('max_per_day'),market_break_days:fd.get('market_break_days'),venue:fd.get('venue'),replace_existing:fd.get('replace_existing')==='1',team_ids:teamIds,allowed_days:allowedDays,times})});alert(`Calendario creato: ${r.matches_created} partite`);manageCalendar()});
-    document.querySelector('#new-finals').onclick=()=>showForm('editor',`<div class="admin-editor-card"><h3>Aggiungi fase finale</h3><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Fase</label><select class="input" name="phase"><option value="playoff">Playoff</option><option value="semifinal">Semifinale</option><option value="final">Finale</option></select></div><div class="field"><label>Nome turno</label><input class="input" name="round_name" placeholder="Es. Playoff 1"></div><div class="field"><label>Data e ora</label><input class="input" type="datetime-local" name="match_date" required></div><div class="field"><label>Casa</label><select class="input" name="home_team_id">${teamOpts}</select></div><div class="field"><label>Trasferta</label><select class="input" name="away_team_id">${teamOpts}</select></div><div class="field full"><label>Campo</label><input class="input" name="venue"></div><div class="field full"><button class="btn primary">Aggiungi partita</button></div></form></div>`,async f=>{await api('admin/calendar/finals',{method:'POST',body:JSON.stringify(f)});manageCalendar()});
+    document.querySelector('#new-finals').onclick=()=>showForm('editor',`<div class="admin-editor-card">
+      <div class="admin-editor-title"><div><span class="eyebrow">Fase premio</span><h3>Mini torneo dal 2º al 5º posto</h3></div></div>
+      <div class="calendar-rule-info"><strong>Regola ufficiale</strong><p>La prima classificata è Campione Prime League. Il mini torneo assegna un premio separato: 2ª vs 5ª e 3ª vs 4ª, poi finale tra le vincenti.</p></div>
+      <form class="form-grid">
+        <div class="field"><label>Operazione</label><select class="input" name="operation" id="prize-operation"><option value="semifinals">Genera le due semifinali</option><option value="final">Genera la finale dopo le semifinali</option></select></div>
+        <div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div>
+        <div class="field prize-semifinal-field"><label>Semifinale 2ª vs 5ª</label><input class="input" type="datetime-local" name="semifinal_1_date"></div>
+        <div class="field prize-semifinal-field"><label>Semifinale 3ª vs 4ª</label><input class="input" type="datetime-local" name="semifinal_2_date"></div>
+        <div class="field prize-final-field" hidden><label>Data finale premio</label><input class="input" type="datetime-local" name="match_date"></div>
+        <div class="field full"><label>Campo</label><input class="input" name="venue"></div>
+        <div class="field full"><button class="btn primary">Genera fase premio</button></div>
+      </form></div>`,async f=>{
+        const endpoint=f.operation==='final'?'admin/calendar/mini-tournament/final':'admin/calendar/mini-tournament';
+        await api(endpoint,{method:'POST',body:JSON.stringify(f)});manageCalendar()
+      });
+      setTimeout(()=>{
+        const operation=document.querySelector('#prize-operation');
+        if(!operation)return;
+        const sync=()=>{
+          const final=operation.value==='final';
+          document.querySelectorAll('.prize-semifinal-field').forEach(x=>x.hidden=final);
+          document.querySelectorAll('.prize-final-field').forEach(x=>x.hidden=!final);
+        };
+        operation.onchange=sync;sync();
+      },0);
     document.querySelector('#delete-calendar').onclick=()=>showForm('editor',`<div class="admin-editor-card danger-zone"><h3>Elimina completamente il calendario</h3><p>Verranno eliminate tutte le partite, i risultati, gli eventi e i referti della stagione scelta.</p><form class="form-grid"><div class="field"><label>Stagione</label><select class="input" name="season_id">${seasonOptions}</select></div><div class="field"><label>Scrivi ELIMINA</label><input class="input" name="confirmation" required></div><div class="field full"><button class="btn danger">Elimina definitivamente</button></div></form></div>`,async f=>{await api('admin/calendar/delete',{method:'POST',body:JSON.stringify(f)});manageCalendar()});
   }
 
