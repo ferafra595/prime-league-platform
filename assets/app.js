@@ -366,7 +366,66 @@ async function competitions(seasonId=''){
     link.dataset.primeCompetitions='1';
     document.head.appendChild(link);
   }
-  const d=await api(`public/competitions${seasonId?`?season=${seasonId}`:''}`);
+  let d;
+  try{
+    d=await Promise.race([
+      api(`public/competitions${seasonId?`?season=${seasonId}`:''}`),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error('Tempo di caricamento superato')),12000))
+    ]);
+  }catch(error){
+    console.warn('Endpoint Competizioni non disponibile, uso i dati di Classifica e Partite.',error);
+    const [tableData,matchesData]=await Promise.all([
+      api(`public/standings${seasonId?`?season=${seasonId}`:''}`),
+      api('public/matches')
+    ]);
+
+    const selected=tableData.selectedSeason;
+    const allMatches=(matchesData.matches||[]).filter(m=>!selected||Number(m.season_id)===Number(selected.id));
+    const isSemifinal=m=>String(m.round_name||'').toLowerCase().includes('semifinale');
+    const isFinal=m=>{
+      const name=String(m.round_name||'').toLowerCase();
+      return name.includes('finale')&&!name.includes('semifinale');
+    };
+    const semifinals=allMatches.filter(isSemifinal);
+    const finalMatch=allMatches.find(isFinal)||null;
+    const regularMatches=allMatches.filter(m=>!isSemifinal(m)&&!isFinal(m));
+    const completed=regularMatches.filter(m=>m.status==='published').length;
+    const finished=regularMatches.length>0&&completed===regularMatches.length;
+
+    let miniStatus='not_started';
+    if(semifinals.length)miniStatus='semifinals';
+    if(semifinals.length>=2&&semifinals.every(m=>m.status==='published'))miniStatus='awaiting_final';
+    if(finalMatch)miniStatus=finalMatch.status==='published'?'completed':'final';
+
+    let winner=null;
+    if(finalMatch&&finalMatch.status==='published'&&Number(finalMatch.home_score)!==Number(finalMatch.away_score)){
+      const homeWon=Number(finalMatch.home_score)>Number(finalMatch.away_score);
+      winner={
+        id:homeWon?finalMatch.home_team_id:finalMatch.away_team_id,
+        name:homeWon?finalMatch.home_name:finalMatch.away_name,
+        logo_url:homeWon?finalMatch.home_logo:finalMatch.away_logo
+      };
+    }
+
+    d={
+      season:selected,
+      seasons:tableData.seasons||[],
+      standings:tableData.standings||[],
+      regular:{
+        total:regularMatches.length,
+        completed,
+        finished,
+        champion:finished?(tableData.standings||[])[0]||null:null
+      },
+      mini_tournament:{
+        status:miniStatus,
+        semifinals,
+        final:finalMatch,
+        winner,
+        qualified:(tableData.standings||[]).slice(1,5)
+      }
+    };
+  }
   if(!d.season){
     set(shell('<div class="competitions-empty">Nessuna stagione disponibile.</div>','competizioni'));
     return;
