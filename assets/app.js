@@ -93,11 +93,12 @@ const avatar = (url,name) => url ? `<img class="avatar" src="${esc(url)}" alt="$
 
 function ensureMediaStyles(){if(!document.querySelector('link[data-prime-media]')){const l=document.createElement('link');l.rel='stylesheet';l.href='/assets/media-admin.css';l.dataset.primeMedia='1';document.head.appendChild(l)}}
 function layout(content, active='home'){
-  const nav = [['home','Home'],['partite','Partite'],['classifica','Classifica'],['squadre','Squadre'],['giocatori','Giocatori'],['statistiche','Statistiche'],['vota','Vota'],['news','News']];
+  const nav = [['home','Home'],['partite','Partite'],['classifica','Classifica'],['competizioni','Competizioni'],['squadre','Squadre'],['giocatori','Giocatori'],['statistiche','Statistiche'],['vota','Vota'],['news','News']];
   const mobile = [
     ['home','⌂','Home'],
     ['partite','⚽','Partite'],
     ['classifica','🏆','Classifica'],
+    ['competizioni','◆','Competizioni'],
     ['squadre','◫','Squadre'],
     ['giocatori','◎','Giocatori'],
     ['statistiche','▥','Statistiche'],
@@ -355,6 +356,91 @@ function premiumStandings(rows){
   return `<div class="standings-desktop"><div class="premium-table-wrap"><table class="premium-table"><thead><tr><th>Pos.</th><th>Squadra</th><th>PG</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>PT</th></tr></thead><tbody>${rows.map((t,i)=>`<tr class="standing-row ${i===0?'league-champion direct-finalist':i<=4?'prize-tournament playoff-zone':''}" data-href="#/squadra/${t.slug}" tabindex="0"><td><span class="position-number">${i+1}</span></td><td><div class="standing-team">${logo(t.logo_url,t.name)}<div><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div></div></td><td>${t.played}</td><td>${t.won}</td><td>${t.drawn}</td><td>${t.lost}</td><td>${t.gf}</td><td>${t.ga}</td><td><span class="goal-difference ${gdClass(t.gd)}">${Number(t.gd)>0?'+':''}${t.gd}</span></td><td><span class="points-value">${t.points}</span></td></tr>`).join('')}</tbody></table></div></div>
   <div class="standings-mobile">${rows.map((t,i)=>`<a class="standing-mobile-card ${i===0?'league-champion direct-finalist':i<=4?'prize-tournament playoff-zone':''}" href="#/squadra/${t.slug}"><div class="standing-mobile-head"><span class="position-number">${i+1}</span>${logo(t.logo_url,t.name)}<div class="standing-mobile-name"><strong>${esc(t.name)}</strong>${qualificationLabel(i)}</div><span class="mobile-points"><b>${t.points}</b><small>PT</small></span></div><div class="standing-mobile-stats"><span><b>${t.played}</b><small>PG</small></span><span><b>${t.won}</b><small>V</small></span><span><b>${t.drawn}</b><small>N</small></span><span><b>${t.lost}</b><small>P</small></span><span><b>${t.gf}</b><small>GF</small></span><span><b>${t.ga}</b><small>GS</small></span><span class="${gdClass(t.gd)}"><b>${Number(t.gd)>0?'+':''}${t.gd}</b><small>DR</small></span></div></a>`).join('')}</div>`;
 }
+
+async function competitions(seasonId=''){
+  loading();
+  if(!document.querySelector('link[data-prime-competitions]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/assets/competitions.css';
+    link.dataset.primeCompetitions='1';
+    document.head.appendChild(link);
+  }
+  const d=await api(`public/competitions${seasonId?`?season=${seasonId}`:''}`);
+  if(!d.season){
+    set(shell('<div class="competitions-empty">Nessuna stagione disponibile.</div>','competizioni'));
+    return;
+  }
+
+  const statusLabels={
+    not_started:'Non ancora iniziato',
+    semifinals:'Semifinali',
+    awaiting_final:'Semifinali concluse',
+    final:'Finale',
+    completed:'Concluso'
+  };
+  const matchCard=(m,label)=>`<article class="bracket-match ${m.status==='published'?'completed':''}">
+    <div class="bracket-match-head"><span>${esc(label||m.round_name||'Partita')}</span><small>${fmtDate(m.match_date)}</small></div>
+    <div class="bracket-team"><span>${logo(m.home_logo,m.home_name)}</span><strong>${esc(m.home_name)}</strong><b>${m.status==='published'?m.home_score:'–'}</b></div>
+    <div class="bracket-team"><span>${logo(m.away_logo,m.away_name)}</span><strong>${esc(m.away_name)}</strong><b>${m.status==='published'?m.away_score:'–'}</b></div>
+    <a href="#/partita/${m.id}">Apri partita →</a>
+  </article>`;
+
+  const qualified=(d.mini_tournament.qualified||[]).map((t,i)=>`<div class="qualified-team">
+    <span>${i+2}º</span>${logo(t.logo_url,t.name)}<strong>${esc(t.name)}</strong>
+  </div>`).join('');
+
+  const semifinals=d.mini_tournament.semifinals||[];
+  const finalMatch=d.mini_tournament.final;
+  const winner=d.mini_tournament.winner;
+  const regularProgress=d.regular.total?Math.round(d.regular.completed/d.regular.total*100):0;
+
+  set(shell(`<div class="competitions-page">
+    <section class="competitions-hero">
+      <div><span>Prime League</span><h1>Competizioni</h1><p>Campionato, mini torneo premio e tutte le future competizioni della lega in un unico spazio.</p></div>
+      <div class="competition-season-select"><label>Stagione</label><select id="competition-season">${(d.seasons||[]).map(s=>`<option value="${s.id}" ${Number(s.id)===Number(d.season.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
+    </section>
+
+    <section class="competition-overview-grid">
+      <article class="competition-main-card league-card">
+        <div class="competition-card-icon">🏆</div>
+        <div class="competition-card-copy"><span>Competizione principale</span><h2>Campionato Prime League</h2><p>La prima classificata vince il campionato e solleva la coppa Prime League.</p></div>
+        <div class="competition-progress"><div><span>Partite concluse</span><b>${d.regular.completed}/${d.regular.total}</b></div><i><em style="width:${regularProgress}%"></em></i></div>
+        ${d.regular.champion?`<div class="competition-winner">${logo(d.regular.champion.logo_url,d.regular.champion.name)}<div><span>Campione ${esc(d.season.name)}</span><strong>${esc(d.regular.champion.name)}</strong></div></div>`:'<div class="competition-pending">Campionato in corso</div>'}
+        <div class="competition-card-actions"><a class="btn primary" href="#/classifica">Classifica</a><a class="btn" href="#/partite">Partite</a></div>
+      </article>
+
+      <article class="competition-main-card prize-card">
+        <div class="competition-card-icon">🥈</div>
+        <div class="competition-card-copy"><span>Fase premio</span><h2>Mini torneo premio</h2><p>Le squadre dal secondo al quinto posto disputano semifinali e finale secca.</p></div>
+        <div class="competition-status-line"><span>Stato</span><b>${esc(statusLabels[d.mini_tournament.status]||'Da definire')}</b></div>
+        ${winner?`<div class="competition-winner">${logo(winner.logo_url,winner.name)}<div><span>Vincitore mini torneo</span><strong>${esc(winner.name)}</strong></div></div>`:`<div class="qualified-list">${qualified||'<span>Le qualificate saranno definite al termine del campionato.</span>'}</div>`}
+        <a class="competition-anchor" href="#mini-torneo">Vai al tabellone ↓</a>
+      </article>
+    </section>
+
+    <section class="competition-bracket-section" id="mini-torneo">
+      <div class="competition-section-head"><div><span>Tabellone</span><h2>Mini torneo premio</h2><p>Semifinali: 2ª contro 5ª e 3ª contro 4ª. Finale tra le vincenti.</p></div><b>${esc(statusLabels[d.mini_tournament.status]||'')}</b></div>
+      ${semifinals.length||finalMatch?`<div class="competition-bracket">
+        <div class="bracket-column"><h3>Semifinali</h3>${semifinals.map((m,i)=>matchCard(m,`Semifinale ${i+1}`)).join('')||'<div class="bracket-placeholder">Semifinali da generare</div>'}</div>
+        <div class="bracket-connector">→</div>
+        <div class="bracket-column final-column"><h3>Finale premio</h3>${finalMatch?matchCard(finalMatch,'Finale'):'<div class="bracket-placeholder">La finale verrà generata dopo le semifinali.</div>'}</div>
+      </div>`:`<div class="competition-bracket-empty"><b>Tabellone non ancora generato</b><span>Comparirà qui quando il campionato sarà concluso e l’Admin creerà le semifinali.</span></div>`}
+    </section>
+
+    <section class="future-competitions">
+      <div class="competition-section-head"><div><span>Evoluzione della lega</span><h2>Prossime competizioni</h2></div></div>
+      <div class="future-competition-grid">
+        <article><span>🏆</span><h3>Coppa Prime League</h3><p>Competizione a eliminazione diretta.</p><b>Prossimamente</b></article>
+        <article><span>⭐</span><h3>Supercoppa</h3><p>Campione del campionato contro vincitore della coppa.</p><b>Prossimamente</b></article>
+        <article><span>🌍</span><h3>Qualificazioni CSI</h3><p>Percorso verso le competizioni nazionali.</p><b>Prossimamente</b></article>
+      </div>
+    </section>
+  </div>`,'competizioni'));
+
+  document.querySelector('#competition-season').onchange=e=>competitions(e.target.value);
+}
+
 async function table(seasonId=''){
   loading();
   const d=await api(`public/standings${seasonId?`?season=${encodeURIComponent(seasonId)}`:''}`);
@@ -426,7 +512,7 @@ async function setup(){set(`<div class="auth-card card"><span class="eyebrow">Pr
 
 function adminRoleLabel(role){return ({super_admin:'Super Admin',organizer:'Organizzatore',team_manager:'Team Manager',referee:'Arbitro',fan:'Tifoso'})[role]||role}
 function dashLayout(body,section='overview'){
-  const league=[['overview','Panoramica'],['seasons','Stagioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['media','Media'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
+  const league=[['overview','Panoramica'],['seasons','Stagioni'],['competitions','Competizioni'],['calendar','Calendario'],['matches','Partite'],['teams','Squadre'],['players','Giocatori'],['submissions','Referti'],['media','Media'],['sponsors','Sponsor'],['news','News'],['polls','Votazioni']];
   if(['super_admin','organizer'].includes(state.user.role)) league.splice(6,0,['users','Account']);
   const teamNav=[['overview','Panoramica'],['profile','Profilo squadra'],['players','Rosa'],['matches','Partite e referti'],['sponsors','Sponsor']];
   const refereeNav=[['overview','Panoramica'],['matches','Partite e referti']];
@@ -624,6 +710,7 @@ async function dashboard(section='overview'){
   }
 
   if(section==='seasons') return manageSeasons();
+  if(section==='competitions') return manageCompetitions();
   if(section==='calendar') return manageCalendar();
   if(section==='teams') return adminTeams();
   if(section==='profile') return teamProfile();
@@ -636,6 +723,53 @@ async function dashboard(section='overview'){
   if(section==='news') return manageNews();
   if(section==='polls') return managePolls();
 }
+
+async function manageCompetitions(seasonId=''){
+  const d=await api(`admin/competitions${seasonId?`?season=${seasonId}`:''}`);
+  if(!document.querySelector('link[data-prime-competitions]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/assets/competitions.css';link.dataset.primeCompetitions='1';document.head.appendChild(link);
+  }
+  if(!d.season){
+    set(dashLayout('<div class="team-area-empty">Nessuna stagione disponibile.</div>','competitions'),'');
+    bindLogout();return;
+  }
+  const phaseMap=Object.fromEntries((d.phases||[]).map(p=>[p.phase,p]));
+  const regular=phaseMap.regular||{total:0,completed:0};
+  const semis=(d.mini_matches||[]).filter(m=>m.phase==='semifinal');
+  const finalMatch=(d.mini_matches||[]).find(m=>m.phase==='final');
+  const regularDone=Number(regular.total)>0&&Number(regular.total)===Number(regular.completed);
+
+  const matchRow=m=>`<div class="admin-competition-match">
+    <span>${m.phase==='final'?'Finale':'Semifinale'}</span>
+    <strong>${esc(m.home_name)} ${m.status==='published'?m.home_score:'–'} ${m.status==='published'?m.away_score:'–'} ${esc(m.away_name)}</strong>
+    <small>${fmtDate(m.match_date)}</small>
+    <a href="#/dashboard/matches">Gestisci</a>
+  </div>`;
+
+  set(dashLayout(`<div class="admin-page-head"><div><span class="eyebrow">Struttura sportiva</span><h2>Competizioni</h2><p>Controlla campionato, mini torneo e future coppe da un unico pannello.</p></div><select class="input admin-competition-season" id="admin-competition-season">${(d.seasons||[]).map(s=>`<option value="${s.id}" ${Number(s.id)===Number(d.season.id)?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
+
+    <section class="admin-competitions-grid">
+      <article class="admin-competition-card">
+        <div class="admin-competition-title"><span>🏆</span><div><small>Competizione principale</small><h3>Campionato Prime League</h3></div></div>
+        <div class="admin-competition-numbers"><div><span>Partite</span><b>${regular.total}</b></div><div><span>Concluse</span><b>${regular.completed}</b></div><div><span>Stato</span><b>${regularDone?'Concluso':'In corso'}</b></div></div>
+        ${d.standings?.length?`<div class="admin-leader">${logo(d.standings[0].logo_url,d.standings[0].name)}<div><span>${regularDone?'Campione':'Prima in classifica'}</span><strong>${esc(d.standings[0].name)}</strong></div></div>`:''}
+        <div class="admin-row-actions"><a class="btn small" href="#/dashboard/calendar">Calendario</a><a class="btn small" href="#/classifica">Classifica pubblica</a></div>
+      </article>
+
+      <article class="admin-competition-card">
+        <div class="admin-competition-title"><span>🥈</span><div><small>Fase premio</small><h3>Mini torneo 2º–5º posto</h3></div></div>
+        <div class="admin-competition-numbers"><div><span>Semifinali</span><b>${semis.length}/2</b></div><div><span>Finale</span><b>${finalMatch?'Creata':'—'}</b></div><div><span>Stato</span><b>${!semis.length?'Da generare':finalMatch?(finalMatch.status==='published'?'Concluso':'Finale'):'Semifinali'}</b></div></div>
+        <div class="admin-competition-matches">${[...semis,...(finalMatch?[finalMatch]:[])].map(matchRow).join('')||'<div class="competition-pending">Nessuna partita del mini torneo.</div>'}</div>
+        <div class="admin-row-actions"><a class="btn primary small" href="#/dashboard/calendar">Genera o modifica</a><a class="btn small" href="#/competizioni">Pagina pubblica</a></div>
+      </article>
+
+      <article class="admin-competition-card future-admin-card"><div class="admin-competition-title"><span>🏆</span><div><small>Futura</small><h3>Coppa Prime League</h3></div></div><p>Struttura predisposta per una futura coppa a eliminazione diretta.</p><b class="future-badge">Non attiva</b></article>
+      <article class="admin-competition-card future-admin-card"><div class="admin-competition-title"><span>⭐</span><div><small>Futura</small><h3>Supercoppa</h3></div></div><p>Potrà essere attivata quando sarà definita la Coppa Prime League.</p><b class="future-badge">Non attiva</b></article>
+    </section>`,'competitions'),'');
+  bindLogout();
+  document.querySelector('#admin-competition-season').onchange=e=>manageCompetitions(e.target.value);
+}
+
 async function manageSeasons(){
   const d=await api('admin/seasons');
   const rows=(d.seasons||[]).map(s=>`<tr><td><b>${esc(s.name)}</b>${s.is_current?'<span class="admin-current-badge">In corso</span>':''}</td><td>${esc(s.competition_name||'Prime League')}</td><td>${s.start_date?fmtDate(s.start_date):'—'}</td><td>${s.end_date?fmtDate(s.end_date):'—'}</td><td><div class="admin-row-actions"><button class="btn small edit-season" data-id="${s.id}">Modifica</button>${!s.is_current?`<button class="btn small primary current-season" data-id="${s.id}">Imposta attuale</button>`:''}<button class="btn small danger delete-season" data-id="${s.id}">Elimina</button></div></td></tr>`).join('');
@@ -2346,5 +2480,5 @@ async function openVotesModule(){
   return module.renderVotes();
 }
 
-async function router(){const [route,...parts]=(location.hash.replace('#/','')||'home').split('/');try{if(route==='home')return home();if(route==='partite')return matches();if(route==='partita')return matchDetail(parts[0]);if(route==='classifica')return table();if(route==='squadre')return teams();if(route==='squadra')return team(parts[0]);if(route==='giocatori')return players();if(route==='giocatore')return player(parts[0]);if(route==='statistiche')return stats();if(route==='vota')return openVotesModule();if(route==='news')return news();if(route==='login')return login();if(route==='recupera-password')return forgotPassword();if(route==='reset-password')return resetPassword(parts[0]);if(route==='registrazione')return register();if(route==='setup')return setup();if(route==='dashboard')return dashboard(parts[0]||'overview');return home()}catch(e){set(`<div class="card">${message(e.message,'error')}<div class="actions"><a class="btn" href="#/home">Torna alla home</a></div></div>`,'')}}
+async function router(){const [route,...parts]=(location.hash.replace('#/','')||'home').split('/');try{if(route==='home')return home();if(route==='partite')return matches();if(route==='partita')return matchDetail(parts[0]);if(route==='classifica')return table();if(route==='competizioni')return competitions();if(route==='squadre')return teams();if(route==='squadra')return team(parts[0]);if(route==='giocatori')return players();if(route==='giocatore')return player(parts[0]);if(route==='statistiche')return stats();if(route==='vota')return openVotesModule();if(route==='news')return news();if(route==='login')return login();if(route==='recupera-password')return forgotPassword();if(route==='reset-password')return resetPassword(parts[0]);if(route==='registrazione')return register();if(route==='setup')return setup();if(route==='dashboard')return dashboard(parts[0]||'overview');return home()}catch(e){set(`<div class="card">${message(e.message,'error')}<div class="actions"><a class="btn" href="#/home">Torna alla home</a></div></div>`,'')}}
 window.addEventListener('hashchange',router);await loadUser();router();
