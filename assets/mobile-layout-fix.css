@@ -1,0 +1,256 @@
+
+/* =========================================================
+   PRIME LEAGUE — CORREZIONE LAYOUT MOBILE GLOBALE
+   ========================================================= */
+
+html{
+  width:100%;
+  min-width:0;
+  overflow-x:hidden;
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
+}
+
+body{
+  width:100%;
+  min-width:0;
+  margin:0;
+  overflow-x:hidden;
+}
+
+#app,
+.shell,
+main.container{
+  min-width:0;
+  max-width:100%;
+}
+
+img,
+svg,
+video{
+  max-width:100%;
+}
+
+/* Impedisce a elementi larghi di aumentare la larghezza del documento */
+.table-wrap,
+.premium-table-wrap,
+.score-scroll,
+.sidebar,
+.lineup-table-wrap{
+  max-width:100%;
+}
+
+/* =========================================================
+   SMARTPHONE
+   ========================================================= */
+
+@media (max-width:650px){
+
+  .shell{
+    width:100%;
+    max-width:100%;
+    overflow:hidden;
+  }
+
+  .topbar{
+    width:100%;
+    max-width:100%;
+    box-sizing:border-box;
+    padding:10px 14px !important;
+  }
+
+  .brand{
+    min-width:0;
+    max-width:75%;
+  }
+
+  .brand-crest{
+    width:40px !important;
+    height:40px !important;
+    flex:0 0 40px;
+  }
+
+  .brand > span{
+    min-width:0;
+    font-size:.78rem;
+    white-space:nowrap;
+  }
+
+  .brand small{
+    display:none !important;
+  }
+
+  main.container{
+    width:100% !important;
+    max-width:100% !important;
+    margin:0 !important;
+    padding:14px 10px 86px !important;
+    box-sizing:border-box;
+  }
+
+  /* Hero Classifica a piena larghezza */
+  .standings-hero{
+    width:auto !important;
+    max-width:none !important;
+    margin:0 -10px 26px !important;
+    padding:34px 16px 24px !important;
+    grid-template-columns:minmax(0,1fr) !important;
+    gap:22px !important;
+    box-sizing:border-box;
+  }
+
+  .standings-hero h1{
+    font-size:2.3rem !important;
+    line-height:1 !important;
+    margin:8px 0 12px !important;
+  }
+
+  .standings-hero p{
+    max-width:100%;
+    font-size:.84rem !important;
+    line-height:1.5;
+  }
+
+  .season-selector-card{
+    width:100% !important;
+    max-width:100% !important;
+    justify-self:stretch !important;
+    padding:15px !important;
+    box-sizing:border-box;
+  }
+
+  .season-selector-card select{
+    width:100%;
+    min-width:0;
+  }
+
+  .standings-content{
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0;
+  }
+
+  .standings-title-row{
+    width:100%;
+    max-width:100%;
+    gap:12px !important;
+    margin-bottom:15px !important;
+  }
+
+  .standings-title-row h2{
+    font-size:1.55rem !important;
+    line-height:1.1;
+  }
+
+  .qualification-legend{
+    width:100%;
+    font-size:.61rem !important;
+    gap:10px !important;
+  }
+
+  .standings-desktop{
+    display:none !important;
+  }
+
+  .standings-mobile{
+    display:grid !important;
+    width:100% !important;
+    max-width:100% !important;
+    grid-template-columns:minmax(0,1fr) !important;
+    gap:9px !important;
+  }
+
+  .standing-mobile-card{
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0;
+    box-sizing:border-box;
+    padding:12px !important;
+    border-radius:16px !important;
+  }
+
+  .standing-mobile-head{
+    width:100%;
+    min-width:0;
+    display:grid !important;
+    grid-template-columns:28px 36px minmax(0,1fr) 46px !important;
+    gap:7px !important;
+  }
+
+  .standing-mobile-head .logo{
+    width:36px !important;
+    height:36px !important;
+    min-width:36px;
+  }
+
+  .standing-mobile-name{
+    min-width:0;
+  }
+
+  .standing-mobile-name strong{
+    font-size:.78rem;
+  }
+
+  .qualification-badge{
+    max-width:100%;
+    font-size:.46rem !important;
+    padding:3px 5px !important;
+  }
+
+  .mobile-points{
+    min-width:44px !important;
+    width:44px;
+    height:44px !important;
+    border-radius:12px !important;
+  }
+
+  .mobile-points b{
+    font-size:1.05rem !important;
+  }
+
+  .standing-mobile-stats{
+    width:100%;
+    min-width:0;
+    grid-template-columns:repeat(7,minmax(0,1fr)) !important;
+    gap:1px !important;
+    margin-top:10px !important;
+    padding-top:10px !important;
+  }
+
+  .standing-mobile-stats b{
+    font-size:.69rem !important;
+  }
+
+  .standing-mobile-stats small{
+    font-size:.43rem !important;
+  }
+
+  /* Strisce e footer sempre a piena larghezza */
+  .brand-marquee,
+  .footer,
+  .mega-footer{
+    width:100% !important;
+    max-width:100% !important;
+    margin-left:0 !important;
+    margin-right:0 !important;
+    box-sizing:border-box;
+  }
+
+  .mega-footer{
+    padding-left:16px !important;
+    padding-right:16px !important;
+  }
+
+  .footer-grid{
+    width:100%;
+    max-width:100%;
+    grid-template-columns:1fr !important;
+  }
+
+  /* Menu inferiore completo e stabile */
+  .mobile-nav{
+    width:100%;
+    max-width:100%;
+    box-sizing:border-box;
+  }
+}
