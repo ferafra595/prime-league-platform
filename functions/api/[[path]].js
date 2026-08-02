@@ -243,8 +243,11 @@ async function standings(env, requestedSeasonId = null) {
     LEFT JOIN matches ma ON ma.away_team_id=t.id AND ma.season_id=?
     WHERE t.is_active=1 OR mh.id IS NOT NULL OR ma.id IS NOT NULL
     ORDER BY t.name`).bind(selected.id,selected.id).all();
-  const matches = await env.DB.prepare(`SELECT home_team_id,away_team_id,home_score,away_score
-    FROM matches WHERE status='published' AND season_id=?`).bind(selected.id).all();
+  const matches = await env.DB.prepare(`SELECT m.home_team_id,m.away_team_id,m.home_score,m.away_score
+    FROM matches m
+    LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
+    WHERE m.status='published' AND m.season_id=?
+      AND COALESCE(msm.phase,'regular')='regular'`).bind(selected.id).all();
   const table = new Map(teams.results.map(t => [t.id, { ...t, played:0, won:0, drawn:0, lost:0, gf:0, ga:0, gd:0, points:0 }]));
   for (const m of matches.results) {
     const h = table.get(m.home_team_id), a = table.get(m.away_team_id); if (!h || !a) continue;
@@ -963,6 +966,92 @@ async function route(request, env, path) {
     const r=await env.DB.prepare('DELETE FROM matches WHERE season_id=?').bind(seasonId).run();
     await audit(env,user.id,'delete_calendar','season',seasonId,{deleted:r.meta.changes});
     return json({ok:true,deleted:r.meta.changes||0});
+  }
+
+  if (path === 'admin/calendar/mini-tournament' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    const seasonId=Number(d.season_id);
+    if(!seasonId||!d.semifinal_1_date||!d.semifinal_2_date)
+      return json({error:'Inserisci stagione e date delle due semifinali'},400);
+
+    const remaining=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
+      LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
+      WHERE m.season_id=? AND COALESCE(msm.phase,'regular')='regular'
+        AND m.status NOT IN ('published','cancelled')`).bind(seasonId).first();
+    if(Number(remaining?.c||0)>0)
+      return json({error:'Il campionato non è ancora concluso: ci sono partite di regular season da completare'},400);
+
+    const tableData=await standings(env,seasonId);
+    if((tableData.standings||[]).length<5)
+      return json({error:'Servono almeno cinque squadre in classifica'},400);
+
+    const existing=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
+      JOIN match_schedule_meta msm ON msm.match_id=m.id
+      WHERE m.season_id=? AND msm.phase='semifinal'`).bind(seasonId).first();
+    if(Number(existing?.c||0)>0)
+      return json({error:'Le semifinali del mini torneo sono già presenti'},409);
+
+    const second=tableData.standings[1], third=tableData.standings[2],
+          fourth=tableData.standings[3], fifth=tableData.standings[4];
+    const venue=d.venue||'';
+
+    const sf1=await env.DB.prepare(`INSERT INTO matches
+      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
+      VALUES(?,?,?,?,?,?,'scheduled')`)
+      .bind(seasonId,'Semifinale premio · 2ª vs 5ª',second.id,fifth.id,d.semifinal_1_date,venue).run();
+    await env.DB.prepare(`INSERT INTO match_schedule_meta
+      (match_id,phase,schedule_status,notes) VALUES(?,'semifinal','scheduled',?)`)
+      .bind(sf1.meta.last_row_id,'Mini torneo premio: seconda classificata contro quinta classificata').run();
+
+    const sf2=await env.DB.prepare(`INSERT INTO matches
+      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
+      VALUES(?,?,?,?,?,?,'scheduled')`)
+      .bind(seasonId,'Semifinale premio · 3ª vs 4ª',third.id,fourth.id,d.semifinal_2_date,venue).run();
+    await env.DB.prepare(`INSERT INTO match_schedule_meta
+      (match_id,phase,schedule_status,notes) VALUES(?,'semifinal','scheduled',?)`)
+      .bind(sf2.meta.last_row_id,'Mini torneo premio: terza classificata contro quarta classificata').run();
+
+    await audit(env,user.id,'generate_prize_semifinals','season',seasonId,{
+      semifinal1:[second.id,fifth.id],semifinal2:[third.id,fourth.id]
+    });
+    return json({ok:true,semifinals:[sf1.meta.last_row_id,sf2.meta.last_row_id]},201);
+  }
+
+  if (path === 'admin/calendar/mini-tournament/final' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    const seasonId=Number(d.season_id);
+    if(!seasonId||!d.match_date)return json({error:'Inserisci stagione e data della finale'},400);
+
+    const semis=(await env.DB.prepare(`SELECT m.* FROM matches m
+      JOIN match_schedule_meta msm ON msm.match_id=m.id
+      WHERE m.season_id=? AND msm.phase='semifinal'
+      ORDER BY datetime(m.match_date),m.id`).bind(seasonId).all()).results;
+    if(semis.length!==2)return json({error:'Devono essere presenti esattamente due semifinali'},400);
+    if(semis.some(m=>m.status!=='published'))
+      return json({error:'Concludi e pubblica entrambe le semifinali prima di generare la finale'},400);
+    if(semis.some(m=>Number(m.home_score)===Number(m.away_score)))
+      return json({error:'Una semifinale risulta in pareggio: indica il vincitore prima di generare la finale'},400);
+
+    const winner=id=>Number(id.home_score)>Number(id.away_score)?Number(id.home_team_id):Number(id.away_team_id);
+    const winner1=winner(semis[0]),winner2=winner(semis[1]);
+
+    const existing=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
+      JOIN match_schedule_meta msm ON msm.match_id=m.id
+      WHERE m.season_id=? AND msm.phase='final'`).bind(seasonId).first();
+    if(Number(existing?.c||0)>0)return json({error:'La finale premio è già presente'},409);
+
+    const result=await env.DB.prepare(`INSERT INTO matches
+      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
+      VALUES(?,'Finale mini torneo premio',?,?,?,?, 'scheduled')`)
+      .bind(seasonId,winner1,winner2,d.match_date,d.venue||'').run();
+    await env.DB.prepare(`INSERT INTO match_schedule_meta
+      (match_id,phase,schedule_status,notes) VALUES(?,'final','scheduled',?)`)
+      .bind(result.meta.last_row_id,'Finale del mini torneo riservato alle squadre classificate dal secondo al quinto posto').run();
+
+    await audit(env,user.id,'generate_prize_final','season',seasonId,{winner1,winner2});
+    return json({ok:true,id:result.meta.last_row_id},201);
   }
 
   if (path === 'admin/calendar/finals' && method==='POST') {
