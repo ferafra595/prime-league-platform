@@ -56,3 +56,108 @@
     line-height:1.35!important;
   }
 }
+
+
+/* ==========================================================
+   HOME MOBILE — FIX SPAZI ATTORNO ALLE STRISCE PRIME LEAGUE
+   SOLO SMARTPHONE — nessuna modifica JavaScript
+   ========================================================== */
+@media (max-width:700px){
+
+  /* ---------- STRISCIA 1: dopo PROSSIMA GIORNATA ---------- */
+
+  /* Il countdown termina vicino alla striscia */
+  .countdown-section{
+    margin-bottom:0 !important;
+    padding-bottom:34px !important;
+  }
+
+  /* Elimina il grande vuoto sopra/sotto la prima striscia */
+  .countdown-section + .brand-marquee.home-marquee.hero-brand-marquee{
+    margin-top:0 !important;
+    margin-bottom:0 !important;
+  }
+
+  /* La card Partite inizia subito dopo la striscia */
+  .brand-marquee.home-marquee.hero-brand-marquee + .score-ribbon{
+    margin-top:18px !important;
+  }
+
+
+  /* ---------- STRISCIA 2: dopo STATISTICHE ---------- */
+
+  /* Elimina margine finale della sezione statistiche */
+  .stats-showcase{
+    margin-bottom:0 !important;
+    padding-bottom:24px !important;
+  }
+
+  /* La seconda striscia resta attaccata alla sezione sopra */
+  .stats-showcase + .brand-marquee.home-marquee{
+    margin-top:0 !important;
+    margin-bottom:0 !important;
+  }
+
+  /* "Le squadre" parte subito dopo la striscia */
+  .stats-showcase + .brand-marquee.home-marquee + .section{
+    margin-top:0 !important;
+    padding-top:24px !important;
+  }
+
+
+  /* ---------- STRISCE: altezza coerente ---------- */
+
+  .brand-marquee.home-marquee{
+    box-sizing:border-box !important;
+    min-height:0 !important;
+    height:92px !important;
+    padding-top:0 !important;
+    padding-bottom:0 !important;
+    overflow:hidden !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track{
+    height:92px !important;
+    display:flex !important;
+    align-items:center !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track > span{
+    height:92px !important;
+    display:flex !important;
+    align-items:center !important;
+    flex-shrink:0 !important;
+  }
+
+  /* Evita spazi ereditati dai contenitori generici */
+  .home-marquee{
+    margin-left:0 !important;
+    margin-right:0 !important;
+  }
+}
+
+
+/* iPhone stretti */
+@media (max-width:390px){
+  .countdown-section{
+    padding-bottom:28px !important;
+  }
+
+  .stats-showcase{
+    padding-bottom:20px !important;
+  }
+
+  .brand-marquee.home-marquee,
+  .brand-marquee.home-marquee .brand-marquee-track,
+  .brand-marquee.home-marquee .brand-marquee-track > span{
+    height:86px !important;
+  }
+
+  .brand-marquee.home-marquee.hero-brand-marquee + .score-ribbon{
+    margin-top:14px !important;
+  }
+
+  .stats-showcase + .brand-marquee.home-marquee + .section{
+    padding-top:20px !important;
+  }
+}
