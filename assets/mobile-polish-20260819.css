@@ -1,0 +1,207 @@
+
+/* =========================================================
+   PRIME LEAGUE — MOBILE POLISH
+   SOLO SMARTPHONE. Desktop invariato.
+   ========================================================= */
+
+@media (max-width:700px){
+
+  /* -------------------------------------------------------
+     1. STRISCIA DOPO "PROSSIMA GIORNATA"
+     Riduce il vuoto sopra e sotto.
+     ------------------------------------------------------- */
+  .countdown-section{
+    margin-bottom:0 !important;
+  }
+
+  .countdown-section + .home-marquee.hero-brand-marquee,
+  .home-marquee.hero-brand-marquee{
+    margin-top:0 !important;
+    margin-bottom:14px !important;
+  }
+
+  .home-marquee.hero-brand-marquee + .score-ribbon{
+    margin-top:0 !important;
+  }
+
+  /* La striscia deve essere compatta, senza contenitore alto */
+  .brand-marquee.home-marquee{
+    min-height:0 !important;
+    height:82px !important;
+    padding:0 !important;
+    overflow:hidden !important;
+    display:flex !important;
+    align-items:center !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track{
+    height:100% !important;
+    display:flex !important;
+    align-items:center !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track span{
+    height:100% !important;
+    display:flex !important;
+    align-items:center !important;
+    white-space:nowrap !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track img{
+    width:34px !important;
+    height:42px !important;
+    object-fit:contain !important;
+  }
+
+  /* -------------------------------------------------------
+     2. STRISCIA TRA STATISTICHE E "LE SQUADRE"
+     Elimina i due grandi vuoti evidenziati.
+     ------------------------------------------------------- */
+  .stats-showcase{
+    margin-bottom:0 !important;
+  }
+
+  .stats-showcase + .brand-marquee.home-marquee{
+    margin-top:12px !important;
+    margin-bottom:12px !important;
+  }
+
+  .stats-showcase + .brand-marquee.home-marquee + .section{
+    margin-top:0 !important;
+    padding-top:10px !important;
+  }
+
+  /* Anche le sezioni successive non devono introdurre
+     margini enormi attorno alla striscia */
+  .brand-marquee.home-marquee + .section{
+    margin-top:0 !important;
+  }
+
+  /* -------------------------------------------------------
+     3. FOOTER MOBILE
+     Più compatto, ordinato, informazioni subito visibili.
+     ------------------------------------------------------- */
+  .mega-footer,
+  .footer{
+    padding:34px 24px 135px !important;
+    min-height:0 !important;
+    height:auto !important;
+    overflow:visible !important;
+  }
+
+  .footer-grid{
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+    column-gap:26px !important;
+    row-gap:30px !important;
+    width:100% !important;
+    max-width:100% !important;
+  }
+
+  /* Brand a tutta larghezza */
+  .footer-grid > .footer-brand{
+    grid-column:1 / -1 !important;
+    margin:0 !important;
+    padding:0 0 6px !important;
+  }
+
+  .footer-logo-lockup{
+    display:flex !important;
+    align-items:center !important;
+    gap:16px !important;
+    margin:0 0 16px !important;
+  }
+
+  .footer-logo-lockup img{
+    width:72px !important;
+    height:88px !important;
+    object-fit:contain !important;
+  }
+
+  .footer-logo-lockup strong{
+    font-size:25px !important;
+    line-height:1.05 !important;
+  }
+
+  .footer-brand p{
+    margin:0 0 18px !important;
+    font-size:14px !important;
+    line-height:1.45 !important;
+    max-width:100% !important;
+  }
+
+  .social-row{
+    display:flex !important;
+    gap:12px !important;
+    margin:0 !important;
+  }
+
+  .social-row a{
+    width:46px !important;
+    height:46px !important;
+    margin:0 !important;
+  }
+
+  /* Campionato e Prime League affiancati: meno scroll */
+  .footer-grid > div:not(.footer-brand):not(:last-child){
+    display:block !important;
+    width:100% !important;
+    min-width:0 !important;
+  }
+
+  /* Informazioni a tutta larghezza, sotto le due colonne */
+  .footer-grid > div:last-child{
+    grid-column:1 / -1 !important;
+    display:block !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    padding-top:22px !important;
+    border-top:1px solid rgba(255,255,255,.12) !important;
+  }
+
+  .footer-grid h4{
+    margin:0 0 15px !important;
+    font-size:16px !important;
+  }
+
+  .footer-grid a{
+    display:block !important;
+    margin:0 0 11px !important;
+    font-size:14px !important;
+    line-height:1.35 !important;
+  }
+
+  /* La parte legale resta sotto Informazioni e non viene
+     nascosta dalla navigazione fissa */
+  .footer-bottom{
+    margin-top:28px !important;
+    padding-top:20px !important;
+  }
+
+  /* Bottom navigation sempre sopra, ma senza coprire footer */
+  .mobile-nav{
+    z-index:9999 !important;
+  }
+}
+
+/* Telefoni stretti: manteniamo le due colonne ma
+   riduciamo leggermente font e spazi. */
+@media (max-width:390px){
+  .mega-footer,
+  .footer{
+    padding-left:20px !important;
+    padding-right:20px !important;
+  }
+
+  .footer-grid{
+    column-gap:18px !important;
+  }
+
+  .footer-grid h4{
+    font-size:15px !important;
+  }
+
+  .footer-grid a{
+    font-size:13px !important;
+  }
+}
