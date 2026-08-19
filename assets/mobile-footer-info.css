@@ -122,3 +122,100 @@
     border-radius:0 !important;
   }
 }
+
+
+/* ==========================================================
+   MOBILE — SOCIAL FOOTER
+   Solo smartphone: cerchi compatti e icone perfettamente centrate.
+   ========================================================== */
+@media (max-width:700px){
+
+  .footer .social-row,
+  .mega-footer .social-row{
+    display:flex !important;
+    align-items:center !important;
+    justify-content:flex-start !important;
+    flex-wrap:nowrap !important;
+    gap:12px !important;
+    margin:18px 0 0 !important;
+  }
+
+  .footer .social-row a,
+  .mega-footer .social-row a{
+    width:48px !important;
+    height:48px !important;
+    min-width:48px !important;
+    min-height:48px !important;
+    max-width:48px !important;
+    max-height:48px !important;
+    box-sizing:border-box !important;
+
+    display:flex !important;
+    align-items:center !important;
+    justify-content:center !important;
+
+    padding:0 !important;
+    margin:0 !important;
+
+    border-radius:50% !important;
+    line-height:1 !important;
+    font-size:20px !important;
+    text-align:center !important;
+
+    overflow:hidden !important;
+  }
+
+  /* Qualsiasi elemento interno all'icona resta centrato */
+  .footer .social-row a > *,
+  .mega-footer .social-row a > *{
+    position:static !important;
+    inset:auto !important;
+    transform:none !important;
+    margin:0 !important;
+    padding:0 !important;
+
+    width:22px !important;
+    height:22px !important;
+    max-width:22px !important;
+    max-height:22px !important;
+
+    display:flex !important;
+    align-items:center !important;
+    justify-content:center !important;
+
+    line-height:1 !important;
+    font-size:20px !important;
+  }
+
+  .footer .social-row a svg,
+  .mega-footer .social-row a svg{
+    width:21px !important;
+    height:21px !important;
+    display:block !important;
+  }
+
+  .footer .social-row a img,
+  .mega-footer .social-row a img{
+    width:21px !important;
+    height:21px !important;
+    object-fit:contain !important;
+  }
+}
+
+/* iPhone più stretti */
+@media (max-width:390px){
+  .footer .social-row,
+  .mega-footer .social-row{
+    gap:10px !important;
+  }
+
+  .footer .social-row a,
+  .mega-footer .social-row a{
+    width:46px !important;
+    height:46px !important;
+    min-width:46px !important;
+    min-height:46px !important;
+    max-width:46px !important;
+    max-height:46px !important;
+  }
+}
