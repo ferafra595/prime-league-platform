@@ -243,11 +243,8 @@ async function standings(env, requestedSeasonId = null) {
     LEFT JOIN matches ma ON ma.away_team_id=t.id AND ma.season_id=?
     WHERE t.is_active=1 OR mh.id IS NOT NULL OR ma.id IS NOT NULL
     ORDER BY t.name`).bind(selected.id,selected.id).all();
-  const matches = await env.DB.prepare(`SELECT m.home_team_id,m.away_team_id,m.home_score,m.away_score
-    FROM matches m
-    LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
-    WHERE m.status='published' AND m.season_id=?
-      AND COALESCE(msm.phase,'regular')='regular'`).bind(selected.id).all();
+  const matches = await env.DB.prepare(`SELECT home_team_id,away_team_id,home_score,away_score
+    FROM matches WHERE status='published' AND season_id=?`).bind(selected.id).all();
   const table = new Map(teams.results.map(t => [t.id, { ...t, played:0, won:0, drawn:0, lost:0, gf:0, ga:0, gd:0, points:0 }]));
   for (const m of matches.results) {
     const h = table.get(m.home_team_id), a = table.get(m.away_team_id); if (!h || !a) continue;
@@ -297,6 +294,50 @@ async function ensureAnonymousVoteSchema(env){
   try{await env.DB.prepare(`ALTER TABLE polls ADD COLUMN match_id INTEGER`).run()}catch{}
   try{await env.DB.prepare(`ALTER TABLE anonymous_poll_votes ADD COLUMN user_agent_hash TEXT`).run()}catch{}
   try{await env.DB.prepare(`ALTER TABLE anonymous_poll_votes ADD COLUMN browser_hash TEXT`).run()}catch{}
+}
+
+
+async function ensureFaqSchema(env){
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS faq_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      icon TEXT NOT NULL DEFAULT '❓',
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS faqs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_id INTEGER NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`)
+  ]);
+  const count=await env.DB.prepare('SELECT COUNT(*) c FROM faqs').first();
+  if(Number(count?.c||0)===0){
+    const seed=[["Iscrizioni e squadre", "📝", "Come si iscrive una squadra?", "Per partecipare è necessario contattare l’organizzazione e completare la procedura di iscrizione entro la data comunicata per la stagione.", 10], ["Iscrizioni e squadre", "📝", "Quante squadre partecipano?", "La Prime League è strutturata per ospitare indicativamente da 10 a 12 squadre, in base alla stagione.", 20], ["Iscrizioni e squadre", "📝", "È possibile iscriversi a campionato iniziato?", "No. Le iscrizioni delle squadre vengono chiuse prima dell’inizio della competizione.", 30], ["Iscrizioni e squadre", "📝", "Cosa comprende la quota di iscrizione?", "La quota copre i servizi organizzativi previsti per la stagione. Tesseramenti, cauzione ed eventuali costi aggiuntivi vengono comunicati separatamente dall’organizzazione.", 40], ["Giocatori e tesseramenti", "👤", "Qual è l’età minima per partecipare?", "La partecipazione è consentita a partire dai 17 anni, nel rispetto della documentazione e delle autorizzazioni richieste.", 10], ["Giocatori e tesseramenti", "👤", "Quanti giocatori deve avere una squadra?", "Ogni squadra deve presentare una rosa di almeno 12 giocatori. Le condizioni definitive sono indicate nei documenti ufficiali della stagione.", 20], ["Giocatori e tesseramenti", "👤", "Possono partecipare giocatori tesserati con altre società?", "Sì, entro il limite massimo previsto dalla Prime League. Attualmente sono ammessi fino a tre tesserati esterni per squadra.", 30], ["Giocatori e tesseramenti", "👤", "È possibile aggiungere giocatori durante la stagione?", "Sì, esclusivamente durante la finestra di mercato stabilita dall’organizzazione e completando il relativo tesseramento.", 40], ["Giocatori e tesseramenti", "👤", "Serve il certificato medico?", "Ogni partecipante deve essere in possesso della documentazione sanitaria e sportiva richiesta per il tesseramento CSI.", 50], ["Partite e calendario", "⚽", "Quanto dura una partita?", "Ogni gara ha una durata complessiva di 60 minuti, suddivisa in due tempi.", 10], ["Partite e calendario", "⚽", "Quando si gioca?", "Le gare vengono programmate principalmente il mercoledì, il giovedì e il venerdì, generalmente nelle fasce orarie serali.", 20], ["Partite e calendario", "⚽", "Una partita può essere spostata?", "Sì. In caso di sospensione, rinvio o necessità organizzative, l’Admin può riprogrammare data, ora e campo.", 30], ["Partite e calendario", "⚽", "Cosa succede se una squadra non si presenta?", "La partita può essere assegnata a tavolino con il risultato di 3-0 e può essere applicata una trattenuta sulla cauzione, secondo le regole della stagione.", 40], ["Classifica e competizioni", "🏆", "Chi vince il campionato?", "La squadra prima classificata al termine della stagione regolare è Campione Prime League e vince la coppa del campionato.", 10], ["Classifica e competizioni", "🏆", "Chi partecipa al mini torneo premio?", "Le squadre classificate dal secondo al quinto posto. Le semifinali sono 2ª contro 5ª e 3ª contro 4ª.", 20], ["Classifica e competizioni", "🏆", "Il mini torneo cambia la classifica?", "No. La classifica finale del campionato resta quella determinata dalla stagione regolare.", 30], ["Classifica e competizioni", "🏆", "Come si aggiorna la classifica?", "Classifica e statistiche vengono aggiornate dopo la pubblicazione del risultato e l’approvazione del referto da parte dell’Admin.", 40], ["Referti e disciplina", "📋", "Chi compila il referto?", "Le due squadre possono inviare il proprio referto, mentre l’arbitro registra gli eventi disciplinari e le informazioni di propria competenza.", 10], ["Referti e disciplina", "📋", "Cosa contiene il referto?", "Risultato, distinta, convocati, titolari, riserve, presenze, gol, assist, ammonizioni, espulsioni, MVP e note.", 20], ["Referti e disciplina", "📋", "Chi rende ufficiali i dati?", "L’Admin confronta i referti ricevuti, risolve eventuali differenze e approva il documento definitivo.", 30], ["Referti e disciplina", "📋", "Come funzionano le squalifiche?", "Tre ammonizioni comportano una giornata di squalifica. Espulsioni e comportamenti gravi vengono valutati secondo le regole disciplinari della lega.", 40], ["Votazioni, sponsor e collaborazioni", "🤝", "Serve registrarsi per votare?", "No. Le votazioni pubbliche non richiedono un account, ma ogni dispositivo può esprimere una sola preferenza per ciascun sondaggio.", 10], ["Votazioni, sponsor e collaborazioni", "🤝", "È possibile sponsorizzare una squadra?", "Sì. Le aziende possono sostenere una singola squadra oppure diventare sponsor della Prime League.", 20], ["Votazioni, sponsor e collaborazioni", "🤝", "Come posso collaborare con la lega?", "La Prime League valuta collaborazioni con arbitri, fotografi, videomaker, speaker, content creator e professionisti del territorio.", 30]];
+    const categoryMap=new Map();
+    for(const [category,icon,question,answer,sortOrder] of seed){
+      let categoryId=categoryMap.get(category);
+      if(!categoryId){
+        let row=await env.DB.prepare('SELECT id FROM faq_categories WHERE name=?').bind(category).first();
+        if(!row){
+          const r=await env.DB.prepare('INSERT INTO faq_categories(name,icon,sort_order,is_active) VALUES(?,?,?,1)')
+            .bind(category,icon,(categoryMap.size+1)*10).run();
+          categoryId=r.meta.last_row_id;
+        } else categoryId=row.id;
+        categoryMap.set(category,categoryId);
+      }
+      await env.DB.prepare('INSERT INTO faqs(category_id,question,answer,sort_order,is_active) VALUES(?,?,?,?,1)')
+        .bind(categoryId,question,answer,sortOrder).run();
+    }
+  }
 }
 
 async function route(request, env, path) {
@@ -447,138 +488,75 @@ async function route(request, env, path) {
     } catch { return json({error:'Email già registrata'},409); }
   }
 
-  if (path === 'public/home') return json(await publicDashboard(env));
-  if (path === 'public/competitions' && method==='GET') {
-    try{
-      const seasonIdParam=new URL(request.url).searchParams.get('season');
-      const tableData=await standings(env,seasonIdParam?Number(seasonIdParam):null);
-      const season=tableData.selectedSeason;
 
-      if(!season){
-        return json({
-          season:null,
-          seasons:tableData.seasons||[],
-          standings:[],
-          regular:{total:0,completed:0,finished:false,champion:null},
-          mini_tournament:{status:'not_started',semifinals:[],final:null,winner:null,qualified:[]}
-        });
-      }
+  if (path === 'public/faqs' && method==='GET') {
+    const categories=(await env.DB.prepare(`SELECT id,name,icon,sort_order FROM faq_categories WHERE is_active=1 ORDER BY sort_order,name`).all()).results;
+    for(const category of categories){
+      category.items=(await env.DB.prepare(`SELECT id,question,answer,sort_order FROM faqs WHERE category_id=? AND is_active=1 ORDER BY sort_order,id`).bind(category.id).all()).results;
+    }
+    return json({categories:categories.filter(c=>c.items.length)});
+  }
 
-      const regularCounts=await env.DB.prepare(`SELECT
-        COUNT(*) total,
-        COALESCE(SUM(CASE WHEN m.status='published' THEN 1 ELSE 0 END),0) completed
-        FROM matches m
-        LEFT JOIN match_schedule_meta meta ON meta.match_id=m.id
-        WHERE m.season_id=?
-          AND COALESCE(meta.phase,'regular')='regular'`)
-        .bind(season.id).first();
+  if (path === 'admin/faqs' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const categories=(await env.DB.prepare(`SELECT * FROM faq_categories ORDER BY sort_order,name`).all()).results;
+    const faqs=(await env.DB.prepare(`SELECT f.*,c.name category_name,c.icon category_icon FROM faqs f JOIN faq_categories c ON c.id=f.category_id ORDER BY c.sort_order,f.sort_order,f.id`).all()).results;
+    return json({categories,faqs});
+  }
 
-      const phaseRows=(await env.DB.prepare(`SELECT
-        m.*,
-        ht.name home_name,ht.logo_url home_logo,
-        at.name away_name,at.logo_url away_logo,
-        COALESCE(meta.phase,
-          CASE
-            WHEN lower(COALESCE(m.round_name,'')) LIKE '%semifinale%' THEN 'semifinal'
-            WHEN lower(COALESCE(m.round_name,'')) LIKE '%finale%' THEN 'final'
-            ELSE 'regular'
-          END
-        ) phase
-        FROM matches m
-        JOIN teams ht ON ht.id=m.home_team_id
-        JOIN teams at ON at.id=m.away_team_id
-        LEFT JOIN match_schedule_meta meta ON meta.match_id=m.id
-        WHERE m.season_id=?
-        ORDER BY datetime(m.match_date),m.id`).bind(season.id).all()).results;
+  if (path === 'admin/faqs' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    if(!Number(d.category_id))return json({error:'Seleziona una categoria'},400);
+    if(!String(d.question||'').trim())return json({error:'Inserisci la domanda'},400);
+    if(!String(d.answer||'').trim())return json({error:'Inserisci la risposta'},400);
+    const r=await env.DB.prepare(`INSERT INTO faqs(category_id,question,answer,sort_order,is_active) VALUES(?,?,?,?,?)`)
+      .bind(Number(d.category_id),String(d.question).trim(),String(d.answer).trim(),Number(d.sort_order||100),d.is_active===false?0:1).run();
+    return json({ok:true,id:r.meta.last_row_id},201);
+  }
 
-      const semifinals=phaseRows.filter(row=>row.phase==='semifinal');
-      const finalMatch=phaseRows.find(row=>row.phase==='final')||null;
-
-      const total=Number(regularCounts?.total||0);
-      const completed=Number(regularCounts?.completed||0);
-      const regularFinished=total>0&&total===completed;
-      const champion=regularFinished&&tableData.standings?.length
-        ? tableData.standings[0]
-        : null;
-
-      let miniStatus='not_started';
-      if(semifinals.length)miniStatus='semifinals';
-      if(semifinals.length>=2&&semifinals.every(match=>match.status==='published'))
-        miniStatus='awaiting_final';
-      if(finalMatch)
-        miniStatus=finalMatch.status==='published'?'completed':'final';
-
-      let miniWinner=null;
-      if(
-        finalMatch &&
-        finalMatch.status==='published' &&
-        Number(finalMatch.home_score)!==Number(finalMatch.away_score)
-      ){
-        const homeWon=Number(finalMatch.home_score)>Number(finalMatch.away_score);
-        miniWinner={
-          id:homeWon?finalMatch.home_team_id:finalMatch.away_team_id,
-          name:homeWon?finalMatch.home_name:finalMatch.away_name,
-          logo_url:homeWon?finalMatch.home_logo:finalMatch.away_logo
-        };
-      }
-
-      return json({
-        season,
-        seasons:tableData.seasons||[],
-        standings:tableData.standings||[],
-        regular:{
-          total,
-          completed,
-          finished:regularFinished,
-          champion
-        },
-        mini_tournament:{
-          status:miniStatus,
-          semifinals,
-          final:finalMatch,
-          winner:miniWinner,
-          qualified:(tableData.standings||[]).slice(1,5)
-        }
-      });
-    }catch(error){
-      console.error('public/competitions failed',error);
-      return json({
-        error:'Impossibile caricare la sezione Competizioni',
-        detail:error?.message||String(error)
-      },500);
+  if (path.match(/^admin\/faqs\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+    if(method==='PUT'){
+      const d=await body(request);
+      await env.DB.prepare(`UPDATE faqs SET category_id=?,question=?,answer=?,sort_order=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(Number(d.category_id),String(d.question||'').trim(),String(d.answer||'').trim(),Number(d.sort_order||100),d.is_active===false?0:1,id).run();
+      return json({ok:true});
+    }
+    if(method==='DELETE'){
+      await env.DB.prepare('DELETE FROM faqs WHERE id=?').bind(id).run();
+      return json({ok:true});
     }
   }
 
-  if (path === 'admin/competitions' && method==='GET') {
+  if (path === 'admin/faq-categories' && method==='POST') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const seasonIdParam=new URL(request.url).searchParams.get('season');
-    const tableData=await standings(env,seasonIdParam?Number(seasonIdParam):null);
-    const season=tableData.selectedSeason;
-    if(!season)return json({season:null,seasons:tableData.seasons});
-
-    const phases=(await env.DB.prepare(`SELECT COALESCE(msm.phase,'regular') phase,
-      COUNT(*) total,
-      COALESCE(SUM(CASE WHEN m.status='published' THEN 1 ELSE 0 END),0) completed
-      FROM matches m LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=?
-      GROUP BY COALESCE(msm.phase,'regular')`).bind(season.id).all()).results;
-
-    const miniMatches=(await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,
-      at.name away_name,at.logo_url away_logo,msm.phase
-      FROM matches m JOIN match_schedule_meta msm ON msm.match_id=m.id
-      JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
-      WHERE m.season_id=? AND msm.phase IN ('semifinal','final')
-      ORDER BY CASE msm.phase WHEN 'semifinal' THEN 1 ELSE 2 END,datetime(m.match_date)`).bind(season.id).all()).results;
-
-    return json({
-      season,
-      seasons:tableData.seasons,
-      standings:tableData.standings,
-      phases,
-      mini_matches:miniMatches
-    });
+    const d=await body(request);
+    if(!String(d.name||'').trim())return json({error:'Inserisci il nome della categoria'},400);
+    const r=await env.DB.prepare(`INSERT INTO faq_categories(name,icon,sort_order,is_active) VALUES(?,?,?,?)`)
+      .bind(String(d.name).trim(),String(d.icon||'❓').trim()||'❓',Number(d.sort_order||100),d.is_active===false?0:1).run();
+    return json({ok:true,id:r.meta.last_row_id},201);
   }
 
+  if (path.match(/^admin\/faq-categories\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+    if(method==='PUT'){
+      const d=await body(request);
+      await env.DB.prepare(`UPDATE faq_categories SET name=?,icon=?,sort_order=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(String(d.name||'').trim(),String(d.icon||'❓').trim()||'❓',Number(d.sort_order||100),d.is_active===false?0:1,id).run();
+      return json({ok:true});
+    }
+    if(method==='DELETE'){
+      const used=await env.DB.prepare('SELECT COUNT(*) c FROM faqs WHERE category_id=?').bind(id).first();
+      if(Number(used?.c||0)>0)return json({error:'La categoria contiene ancora FAQ'},409);
+      await env.DB.prepare('DELETE FROM faq_categories WHERE id=?').bind(id).run();
+      return json({ok:true});
+    }
+  }
+
+  if (path === 'public/home') return json(await publicDashboard(env));
   if (path === 'public/standings') {
     const seasonId = new URL(request.url).searchParams.get('season');
     return json(await standings(env, seasonId ? Number(seasonId) : null));
@@ -846,7 +824,8 @@ async function route(request, env, path) {
     const rawToken=String(request.headers.get('x-prime-voter')||'').trim();
     const voterHash=rawToken.length>=32?await voteHash(`pl-voter:${rawToken}`):'';
 
-    const polls=(await env.DB.prepare(`SELECT p.*
+    const polls=(await env.DB.prepare(`SELECT p.*,
+      (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.poll_id=p.id) votes_count
       FROM polls p
       WHERE p.status IN ('open','closed')
         AND datetime(p.starts_at)<=datetime('now')
@@ -856,7 +835,8 @@ async function route(request, env, path) {
 
     for(const poll of polls){
       poll.is_open=poll.status==='open' && new Date(poll.ends_at).getTime()>=Date.now();
-      poll.options=(await env.DB.prepare(`SELECT o.*
+      poll.options=(await env.DB.prepare(`SELECT o.*,
+        (SELECT COUNT(*) FROM anonymous_poll_votes v WHERE v.option_id=o.id) votes
         FROM poll_options o WHERE o.poll_id=? ORDER BY o.id`).bind(poll.id).all()).results;
 
       poll.user_voted=false;
@@ -1097,92 +1077,6 @@ async function route(request, env, path) {
     const r=await env.DB.prepare('DELETE FROM matches WHERE season_id=?').bind(seasonId).run();
     await audit(env,user.id,'delete_calendar','season',seasonId,{deleted:r.meta.changes});
     return json({ok:true,deleted:r.meta.changes||0});
-  }
-
-  if (path === 'admin/calendar/mini-tournament' && method==='POST') {
-    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const d=await body(request);
-    const seasonId=Number(d.season_id);
-    if(!seasonId||!d.semifinal_1_date||!d.semifinal_2_date)
-      return json({error:'Inserisci stagione e date delle due semifinali'},400);
-
-    const remaining=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
-      LEFT JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=? AND COALESCE(msm.phase,'regular')='regular'
-        AND m.status NOT IN ('published','cancelled')`).bind(seasonId).first();
-    if(Number(remaining?.c||0)>0)
-      return json({error:'Il campionato non è ancora concluso: ci sono partite di regular season da completare'},400);
-
-    const tableData=await standings(env,seasonId);
-    if((tableData.standings||[]).length<5)
-      return json({error:'Servono almeno cinque squadre in classifica'},400);
-
-    const existing=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
-      JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=? AND msm.phase='semifinal'`).bind(seasonId).first();
-    if(Number(existing?.c||0)>0)
-      return json({error:'Le semifinali del mini torneo sono già presenti'},409);
-
-    const second=tableData.standings[1], third=tableData.standings[2],
-          fourth=tableData.standings[3], fifth=tableData.standings[4];
-    const venue=d.venue||'';
-
-    const sf1=await env.DB.prepare(`INSERT INTO matches
-      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
-      VALUES(?,?,?,?,?,?,'scheduled')`)
-      .bind(seasonId,'Semifinale premio · 2ª vs 5ª',second.id,fifth.id,d.semifinal_1_date,venue).run();
-    await env.DB.prepare(`INSERT INTO match_schedule_meta
-      (match_id,phase,schedule_status,notes) VALUES(?,'semifinal','scheduled',?)`)
-      .bind(sf1.meta.last_row_id,'Mini torneo premio: seconda classificata contro quinta classificata').run();
-
-    const sf2=await env.DB.prepare(`INSERT INTO matches
-      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
-      VALUES(?,?,?,?,?,?,'scheduled')`)
-      .bind(seasonId,'Semifinale premio · 3ª vs 4ª',third.id,fourth.id,d.semifinal_2_date,venue).run();
-    await env.DB.prepare(`INSERT INTO match_schedule_meta
-      (match_id,phase,schedule_status,notes) VALUES(?,'semifinal','scheduled',?)`)
-      .bind(sf2.meta.last_row_id,'Mini torneo premio: terza classificata contro quarta classificata').run();
-
-    await audit(env,user.id,'generate_prize_semifinals','season',seasonId,{
-      semifinal1:[second.id,fifth.id],semifinal2:[third.id,fourth.id]
-    });
-    return json({ok:true,semifinals:[sf1.meta.last_row_id,sf2.meta.last_row_id]},201);
-  }
-
-  if (path === 'admin/calendar/mini-tournament/final' && method==='POST') {
-    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const d=await body(request);
-    const seasonId=Number(d.season_id);
-    if(!seasonId||!d.match_date)return json({error:'Inserisci stagione e data della finale'},400);
-
-    const semis=(await env.DB.prepare(`SELECT m.* FROM matches m
-      JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=? AND msm.phase='semifinal'
-      ORDER BY datetime(m.match_date),m.id`).bind(seasonId).all()).results;
-    if(semis.length!==2)return json({error:'Devono essere presenti esattamente due semifinali'},400);
-    if(semis.some(m=>m.status!=='published'))
-      return json({error:'Concludi e pubblica entrambe le semifinali prima di generare la finale'},400);
-    if(semis.some(m=>Number(m.home_score)===Number(m.away_score)))
-      return json({error:'Una semifinale risulta in pareggio: indica il vincitore prima di generare la finale'},400);
-
-    const winner=id=>Number(id.home_score)>Number(id.away_score)?Number(id.home_team_id):Number(id.away_team_id);
-    const winner1=winner(semis[0]),winner2=winner(semis[1]);
-
-    const existing=await env.DB.prepare(`SELECT COUNT(*) c FROM matches m
-      JOIN match_schedule_meta msm ON msm.match_id=m.id
-      WHERE m.season_id=? AND msm.phase='final'`).bind(seasonId).first();
-    if(Number(existing?.c||0)>0)return json({error:'La finale premio è già presente'},409);
-
-    const result=await env.DB.prepare(`INSERT INTO matches
-      (season_id,round_name,home_team_id,away_team_id,match_date,venue,status)
-      VALUES(?,'Finale mini torneo premio',?,?,?,?, 'scheduled')`)
-      .bind(seasonId,winner1,winner2,d.match_date,d.venue||'').run();
-    await env.DB.prepare(`INSERT INTO match_schedule_meta
-      (match_id,phase,schedule_status,notes) VALUES(?,'final','scheduled',?)`)
-      .bind(result.meta.last_row_id,'Finale del mini torneo riservato alle squadre classificate dal secondo al quinto posto').run();
-
-    await audit(env,user.id,'generate_prize_final','season',seasonId,{winner1,winner2});
-    return json({ok:true,id:result.meta.last_row_id},201);
   }
 
   if (path === 'admin/calendar/finals' && method==='POST') {
@@ -1919,6 +1813,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
