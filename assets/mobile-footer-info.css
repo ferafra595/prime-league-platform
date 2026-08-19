@@ -103,3 +103,22 @@
     padding-bottom:16px !important;
   }
 }
+
+
+/* ==========================================================
+   MOBILE — HOME MARQUEE FULL BLEED
+   SOLO larghezza laterale: elimina gli spazi bianchi ai lati.
+   Non modifica altezza, margini verticali o sezioni vicine.
+   ========================================================== */
+@media (max-width:700px){
+  .brand-marquee.home-marquee{
+    width:100vw !important;
+    max-width:none !important;
+    position:relative !important;
+    left:50% !important;
+    right:auto !important;
+    margin-left:-50vw !important;
+    margin-right:0 !important;
+    border-radius:0 !important;
+  }
+}
