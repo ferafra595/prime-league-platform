@@ -1,0 +1,25 @@
+
+.formula-cms-page{display:grid;gap:0}
+.formula-cms-section{margin-top:30px}
+.formula-cms-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}
+.formula-cms-cards article{min-height:80px;padding:15px;border:1px solid #dfe7ef;border-radius:15px;background:#f8fafc;display:flex;align-items:flex-start;gap:11px}
+.formula-cms-cards article>span{width:28px;height:28px;flex:0 0 28px;display:grid;place-items:center;border-radius:9px;background:#e9f2ff;color:#1768e8;font-size:9px;font-weight:900}
+.formula-cms-cards strong{font-size:11px;line-height:1.45;color:#17304f}
+.formula-cms-process{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.formula-cms-process article{position:relative;min-height:105px;padding:15px;border-radius:14px;background:#071b3b;color:#fff;display:flex;flex-direction:column;gap:18px}
+.formula-cms-process article:not(:last-child):after{content:'→';position:absolute;right:-10px;top:44%;z-index:2;color:#70a4ff}
+.formula-cms-process b{color:#70a4ff}.formula-cms-process span{font-size:10px;font-weight:800;line-height:1.4}
+.formula-cms-media{margin-top:30px;padding:35px;border-radius:25px;background:linear-gradient(135deg,#071a39,#12468e);color:#fff}
+.formula-cms-media>div:first-child>span,.formula-cms-champion>div:last-child>span{font-size:10px;font-weight:900;letter-spacing:.15em;text-transform:uppercase;color:#85b2ff}
+.formula-cms-media h2,.formula-cms-champion h2{font-size:35px;margin:7px 0 10px}
+.formula-cms-media p,.formula-cms-champion p{max-width:820px;line-height:1.6;color:#c9d7e9}
+.formula-cms-media .formula-cms-cards article{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.13)}
+.formula-cms-media .formula-cms-cards strong{color:#fff}.formula-cms-media .formula-cms-cards article>span{background:rgba(255,255,255,.12);color:#8bb6ff}
+.formula-cms-champion{margin-top:30px;display:grid;grid-template-columns:145px 1fr;gap:25px;align-items:center;padding:38px;border-radius:25px;background:radial-gradient(circle at 10% 50%,rgba(242,198,62,.22),transparent 28%),linear-gradient(135deg,#061832,#123a73);color:#fff}
+.formula-cms-big-icon{font-size:88px;text-align:center}
+.formula-cms-champion .formula-cms-cards article{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.13)}
+.formula-cms-champion .formula-cms-cards strong{color:#fff}
+.formula-cms-bracket{display:grid;grid-template-columns:1fr 1fr 50px 1fr;gap:10px;align-items:center;padding:22px;border-radius:18px;background:#071b3b}
+.formula-cms-bracket>div{padding:15px;border-radius:13px;background:#fff;display:flex;flex-direction:column;gap:5px}.formula-cms-bracket small{font-size:8px;color:#718095}.formula-cms-bracket strong{font-size:11px}.formula-cms-bracket>b{text-align:center;color:#78a9ff;font-size:26px}.formula-cms-bracket .final{background:#edf5ff}
+@media(max-width:850px){.formula-cms-cards{grid-template-columns:1fr 1fr}.formula-cms-process{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:650px){.formula-cms-cards{grid-template-columns:1fr}.formula-cms-process{grid-template-columns:1fr 1fr}.formula-cms-process article:not(:last-child):after{display:none}.formula-cms-media{padding:24px 18px}.formula-cms-media h2,.formula-cms-champion h2{font-size:29px}.formula-cms-champion{grid-template-columns:1fr;padding:25px 18px}.formula-cms-big-icon{text-align:left;font-size:62px}.formula-cms-bracket{grid-template-columns:1fr}.formula-cms-bracket>b{transform:rotate(90deg)}}
