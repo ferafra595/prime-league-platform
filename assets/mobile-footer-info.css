@@ -56,3 +56,50 @@
     line-height:1.35!important;
   }
 }
+
+
+/* ==========================================================
+   MOBILE — STRISCE HOME IDENTICHE ALLA STRISCIA STANDARD
+   Mantiene INVARIATI margini/spaziature originali delle sezioni.
+   ========================================================== */
+@media (max-width:700px){
+
+  /* Le due strisce della home usano lo stesso formato visivo
+     della brand-marquee standard (come quella sopra il footer). */
+  .brand-marquee.home-marquee{
+    height:auto !important;
+    min-height:0 !important;
+    padding:0 !important;
+
+    /* IMPORTANTE: non tocchiamo margin-top / margin-bottom */
+    box-sizing:border-box !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track{
+    height:auto !important;
+    min-height:0 !important;
+    padding:0 !important;
+    align-items:center !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track > span{
+    height:auto !important;
+    min-height:0 !important;
+    align-items:center !important;
+  }
+
+  /* Stessa scala compatta della striscia standard mobile */
+  .brand-marquee.home-marquee .brand-marquee-track img{
+    width:34px !important;
+    height:42px !important;
+    object-fit:contain !important;
+  }
+
+  .brand-marquee.home-marquee .brand-marquee-track span{
+    font-size:18px !important;
+    line-height:1 !important;
+    gap:12px !important;
+    padding-top:16px !important;
+    padding-bottom:16px !important;
+  }
+}
