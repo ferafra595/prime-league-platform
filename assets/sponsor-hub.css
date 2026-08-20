@@ -13,3 +13,24 @@
 .sponsor-detail-footer{margin-top:25px;padding:28px 32px;background:#fff;border:1px solid #dce5ef;border-radius:21px;display:flex;align-items:center;justify-content:space-between}.sponsor-detail-footer h2{margin:5px 0 0}
 @media(max-width:900px){.sponsor-public-grid{grid-template-columns:1fr 1fr}.sponsor-detail-layout{grid-template-columns:1fr}.sponsor-benefit-main{grid-template-columns:1fr}.sponsor-social-section{align-items:flex-start;flex-direction:column}}
 @media(max-width:650px){.sponsor-hub-hero{min-height:280px;padding:42px 20px;border-radius:23px}.sponsor-hub-hero h1{font-size:45px}.sponsor-hub-intro{align-items:flex-start;flex-direction:column;padding:22px 18px}.sponsor-public-grid{grid-template-columns:1fr}.sponsor-public-card{min-height:240px}.sponsor-business-cta{align-items:flex-start;flex-direction:column;padding:27px 20px}.sponsor-business-cta .btn{width:100%;box-sizing:border-box;text-align:center}.sponsor-detail-hero{min-height:350px;padding:25px 20px}.sponsor-detail-back{top:20px;left:20px}.sponsor-detail-lockup{align-items:flex-start;flex-direction:column}.sponsor-detail-logo{width:100px;height:100px}.sponsor-detail-lockup h1{font-size:39px}.sponsor-benefit{padding:22px 18px}.sponsor-benefit-main h2{font-size:27px}.sponsor-benefit-terms{flex-direction:column;gap:6px}.sponsor-about-card{padding:23px 18px}.sponsor-social-links{width:100%;display:grid;grid-template-columns:1fr}.sponsor-social-links a{min-width:0}.sponsor-gallery-section{padding:22px 18px}.sponsor-gallery-grid{grid-template-columns:1fr 1fr}.sponsor-detail-footer{align-items:flex-start;flex-direction:column;gap:18px}.sponsor-detail-footer .btn{width:100%;box-sizing:border-box;text-align:center}}
+
+
+/* Contrasto logo configurabile per ogni sponsor */
+.sponsor-public-logo.logo-bg-light,
+.sponsor-detail-logo.logo-bg-light{
+  background:#ffffff !important;
+}
+.sponsor-public-logo.logo-bg-dark,
+.sponsor-detail-logo.logo-bg-dark{
+  background:#071426 !important;
+}
+.sponsor-public-logo.logo-bg-prime,
+.sponsor-detail-logo.logo-bg-prime{
+  background:linear-gradient(135deg,#071a39,#1455aa) !important;
+}
+.sponsor-public-logo.logo-bg-dark img,
+.sponsor-public-logo.logo-bg-prime img,
+.sponsor-detail-logo.logo-bg-dark img,
+.sponsor-detail-logo.logo-bg-prime img{
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.18));
+}
