@@ -358,6 +358,7 @@ async function ensureSponsorProfileSchema(env){
   const additions=[
     ['slug',`TEXT`],
     ['category',`TEXT NOT NULL DEFAULT ''`],
+    ['logo_bg',`TEXT NOT NULL DEFAULT 'light'`],
     ['partner_tier',`TEXT NOT NULL DEFAULT 'partner'`],
     ['cover_url',`TEXT NOT NULL DEFAULT ''`],
     ['description',`TEXT NOT NULL DEFAULT ''`],
@@ -403,8 +404,17 @@ async function ensureSponsorProfileSchema(env){
 function sponsorPromoLive(s){
   if(!Number(s.promo_active||0))return false;
   const now=Date.now();
-  if(s.promo_start && new Date(s.promo_start).getTime()>now)return false;
-  if(s.promo_end && new Date(s.promo_end).getTime()<now)return false;
+  const parsePromoDate=(v,endOfDay=false)=>{
+    if(!v)return null;
+    let str=String(v).trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str))str+=endOfDay?'T23:59:59':'T00:00:00';
+    const t=new Date(str).getTime();
+    return Number.isFinite(t)?t:null;
+  };
+  const start=parsePromoDate(s.promo_start,false);
+  const end=parsePromoDate(s.promo_end,true);
+  if(start!==null && start>now)return false;
+  if(end!==null && end<now)return false;
   return true;
 }
 function mapSponsorRow(s){
@@ -1727,14 +1737,14 @@ async function route(request, env, path) {
     while(await env.DB.prepare('SELECT id FROM sponsors WHERE slug=?').bind(slug).first())slug=`${base}-${n++}`;
 
     const result=await env.DB.prepare(`INSERT INTO sponsors(
-      name,slug,logo_url,cover_url,category,partner_tier,description,
+      name,slug,logo_url,cover_url,category,logo_bg,partner_tier,description,
       phone,whatsapp,email,address,website_url,google_url,
       instagram_url,facebook_url,tiktok_url,gallery_json,
       promo_active,promo_title,promo_description,promo_code,promo_terms,promo_start,promo_end,
       level,team_id,is_featured,is_active,sort_order,updated_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       .bind(
-        String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',
+        String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',d.logo_bg||'light',
         d.partner_tier||'partner',d.description||'',d.phone||'',d.whatsapp||'',d.email||'',
         d.address||'',d.website_url||'',d.google_url||'',d.instagram_url||'',d.facebook_url||'',
         d.tiktok_url||'',JSON.stringify(Array.isArray(d.gallery)?d.gallery:[]),
@@ -1763,14 +1773,14 @@ async function route(request, env, path) {
       while(await env.DB.prepare('SELECT id FROM sponsors WHERE slug=? AND id<>?').bind(slug,id).first())slug=`${base}-${n++}`;
 
       await env.DB.prepare(`UPDATE sponsors SET
-        name=?,slug=?,logo_url=?,cover_url=?,category=?,partner_tier=?,description=?,
+        name=?,slug=?,logo_url=?,cover_url=?,category=?,logo_bg=?,partner_tier=?,description=?,
         phone=?,whatsapp=?,email=?,address=?,website_url=?,google_url=?,
         instagram_url=?,facebook_url=?,tiktok_url=?,gallery_json=?,
         promo_active=?,promo_title=?,promo_description=?,promo_code=?,promo_terms=?,promo_start=?,promo_end=?,
         level=?,team_id=?,is_featured=?,is_active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP
         WHERE id=?`)
         .bind(
-          String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',
+          String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',d.logo_bg||'light',
           d.partner_tier||'partner',d.description||'',d.phone||'',d.whatsapp||'',d.email||'',
           d.address||'',d.website_url||'',d.google_url||'',d.instagram_url||'',d.facebook_url||'',
           d.tiktok_url||'',JSON.stringify(Array.isArray(d.gallery)?d.gallery:[]),
