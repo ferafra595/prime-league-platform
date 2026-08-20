@@ -342,31 +342,77 @@ async function ensureFaqSchema(env){
 }
 
 
-async function ensureFormulaSchema(env){
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS formula_sections (
+async function ensureSponsorProfileSchema(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sponsors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    section_key TEXT NOT NULL UNIQUE,
-    kicker TEXT NOT NULL DEFAULT '',
-    title TEXT NOT NULL,
-    body TEXT NOT NULL DEFAULT '',
-    items_json TEXT NOT NULL DEFAULT '[]',
-    style TEXT NOT NULL DEFAULT 'cards',
-    sort_order INTEGER NOT NULL DEFAULT 100,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    name TEXT NOT NULL,
+    logo_url TEXT,
+    website_url TEXT,
+    level TEXT NOT NULL DEFAULT 'league',
+    team_id INTEGER,
+    is_featured INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1
   )`).run();
 
-  const count=await env.DB.prepare('SELECT COUNT(*) c FROM formula_sections').first();
-  if(Number(count?.c||0)===0){
-    const seed=[{"section_key": "overview", "kicker": "01 · Campionato", "title": "Una stagione di circa 5 mesi", "body": "La Prime League è un campionato strutturato con gare di andata e ritorno. Ogni squadra affronta tutte le altre due volte nel corso di una stagione che si sviluppa indicativamente nell’arco di circa cinque mesi. Calendario, risultati e classifica vengono aggiornati durante tutta la competizione.", "items": ["Campionato con gare di andata e ritorno", "Durata indicativa di circa 5 mesi", "Calendario organizzato per giornate", "Classifica aggiornata durante la stagione"], "style": "intro", "sort_order": 10}, {"section_key": "matchday", "kicker": "02 · Giornata di gara", "title": "Ogni partita fa parte di un sistema organizzato", "body": "Le gare non sono eventi isolati: ogni partita è inserita nel calendario ufficiale della stagione e viene gestita attraverso convocazioni, distinta, titolari, riserve, presenze, risultato ed eventi della gara.", "items": ["Convocati e distinta ufficiale", "Titolari e riserve", "Presenze effettive, compresi i subentrati", "Gol e assist", "Ammonizioni ed espulsioni", "MVP e dati della partita"], "style": "cards", "sort_order": 20}, {"section_key": "players", "kicker": "03 · Giocatori", "title": "Tesseramenti e identità ufficiale", "body": "Ogni partecipante viene inserito nella rosa ufficiale della propria squadra. Il giocatore dispone di una scheda personale all’interno della piattaforma e di un cartellino identificativo collegato alla stagione.", "items": ["Tesseramento del giocatore", "Cartellino giocatore", "Numero di maglia e ruolo", "Foto e profilo personale", "Statistiche individuali", "Storico delle presenze e degli eventi"], "style": "cards", "sort_order": 30}, {"section_key": "referees", "kicker": "04 · Arbitraggio", "title": "Arbitri e gestione disciplinare", "body": "Le partite sono dirette da arbitri incaricati per la competizione. L’arbitro dispone di un accesso dedicato per compilare il proprio referto e registrare gli eventi disciplinari della gara.", "items": ["Arbitro designato per la gara", "Referto arbitrale", "Ammonizioni", "Espulsioni", "Segnalazioni disciplinari", "Verifica finale da parte dell’organizzazione"], "style": "cards", "sort_order": 40}, {"section_key": "reports", "kicker": "05 · Referti", "title": "Dati verificati prima della pubblicazione", "body": "Le squadre possono inviare il proprio referto e l’arbitro compila quello di propria competenza. L’organizzazione confronta i dati ricevuti, risolve eventuali differenze e approva il referto definitivo. Solo dopo l’approvazione i dati diventano ufficiali.", "items": ["Referto squadra A", "Referto squadra B", "Referto arbitro", "Confronto automatico degli eventi coincidenti", "Controllo dell’Admin", "Pubblicazione del referto definitivo"], "style": "process", "sort_order": 50}, {"section_key": "statistics", "kicker": "06 · Dati e statistiche", "title": "Il campionato vive anche attraverso i numeri", "body": "Risultati e referti alimentano automaticamente le statistiche della piattaforma. Squadre, giocatori e pubblico possono seguire l’andamento della stagione attraverso dati aggiornati.", "items": ["Classifica", "Gol", "Assist", "Presenze", "Cartellini", "MVP", "Statistiche dei giocatori", "Statistiche delle squadre"], "style": "cards", "sort_order": 60}, {"section_key": "media", "kicker": "07 · Comunicazione", "title": "Interviste, contenuti e racconto social", "body": "Prime League non si limita alle partite. La competizione viene raccontata attraverso contenuti digitali pensati per dare visibilità alle squadre, ai giocatori, agli sponsor e ai protagonisti della stagione.", "items": ["Interviste ai protagonisti", "Foto e video delle giornate", "Highlights e contenuti partita", "Grafiche risultati e classifiche", "Contenuti social", "News e aggiornamenti della lega"], "style": "media", "sort_order": 70}, {"section_key": "engagement", "kicker": "08 · Community", "title": "Il pubblico partecipa alla stagione", "body": "Attraverso la piattaforma ufficiale il pubblico può seguire la competizione e partecipare alle votazioni aperte dalla lega, senza necessità di creare un account.", "items": ["Votazioni MVP", "Sondaggi ufficiali", "Partite e risultati", "Classifica", "Squadre e giocatori", "News della competizione"], "style": "cards", "sort_order": 80}, {"section_key": "champion", "kicker": "09 · Titolo", "title": "Il primo classificato è Campione Prime League", "body": "Al termine della stagione regolare la squadra che occupa il primo posto della classifica viene proclamata Campione Prime League e conquista il titolo della stagione.", "items": ["Primo posto nella classifica finale", "Titolo di Campione Prime League", "Coppa del campionato", "Premio principale della stagione"], "style": "champion", "sort_order": 90}, {"section_key": "mini_tournament", "kicker": "10 · Fase premio", "title": "Mini torneo dal 2º al 5º posto", "body": "Le squadre classificate dal secondo al quinto posto accedono a un mini torneo separato. Le semifinali sono 2ª contro 5ª e 3ª contro 4ª; le due vincenti disputano la finale. Il mini torneo assegna un premio dedicato e non modifica la classifica finale del campionato.", "items": ["Semifinale 1: 2ª vs 5ª", "Semifinale 2: 3ª vs 4ª", "Finale tra le due vincenti", "Premio separato dal titolo di Campione"], "style": "bracket", "sort_order": 100}, {"section_key": "organization", "kicker": "11 · Organizzazione", "title": "Una competizione gestita durante tutta la stagione", "body": "L’organizzazione coordina calendario, account delle squadre, gestione degli arbitri, referti, comunicazioni, statistiche, votazioni e contenuti ufficiali. L’obiettivo è offrire una competizione ordinata e un’esperienza chiara sia dentro che fuori dal campo.", "items": ["Gestione calendario e partite", "Gestione squadre e giocatori", "Coordinamento arbitrale", "Approvazione dei referti", "Aggiornamento della piattaforma", "Comunicazione e contenuti ufficiali"], "style": "organization", "sort_order": 110}];
-    for(const s of seed){
-      await env.DB.prepare(`INSERT INTO formula_sections
-        (section_key,kicker,title,body,items_json,style,sort_order,is_active)
-        VALUES(?,?,?,?,?,?,?,1)`)
-        .bind(s.section_key,s.kicker,s.title,s.body,JSON.stringify(s.items||[]),s.style,s.sort_order).run();
+  const cols=(await env.DB.prepare(`PRAGMA table_info(sponsors)`).all()).results.map(x=>x.name);
+  const additions=[
+    ['slug',`TEXT`],
+    ['category',`TEXT NOT NULL DEFAULT ''`],
+    ['partner_tier',`TEXT NOT NULL DEFAULT 'partner'`],
+    ['cover_url',`TEXT NOT NULL DEFAULT ''`],
+    ['description',`TEXT NOT NULL DEFAULT ''`],
+    ['phone',`TEXT NOT NULL DEFAULT ''`],
+    ['whatsapp',`TEXT NOT NULL DEFAULT ''`],
+    ['email',`TEXT NOT NULL DEFAULT ''`],
+    ['address',`TEXT NOT NULL DEFAULT ''`],
+    ['google_url',`TEXT NOT NULL DEFAULT ''`],
+    ['instagram_url',`TEXT NOT NULL DEFAULT ''`],
+    ['facebook_url',`TEXT NOT NULL DEFAULT ''`],
+    ['tiktok_url',`TEXT NOT NULL DEFAULT ''`],
+    ['gallery_json',`TEXT NOT NULL DEFAULT '[]'`],
+    ['promo_active',`INTEGER NOT NULL DEFAULT 0`],
+    ['promo_title',`TEXT NOT NULL DEFAULT ''`],
+    ['promo_description',`TEXT NOT NULL DEFAULT ''`],
+    ['promo_code',`TEXT NOT NULL DEFAULT ''`],
+    ['promo_terms',`TEXT NOT NULL DEFAULT ''`],
+    ['promo_start',`TEXT`],
+    ['promo_end',`TEXT`],
+    ['sort_order',`INTEGER NOT NULL DEFAULT 100`],
+    ['updated_at',`TEXT`]
+  ];
+  for(const [name,type] of additions){
+    if(!cols.includes(name)){
+      try{await env.DB.prepare(`ALTER TABLE sponsors ADD COLUMN ${name} ${type}`).run()}catch{}
     }
   }
+
+  const rows=(await env.DB.prepare(`SELECT id,name,slug FROM sponsors`).all()).results;
+  for(const row of rows){
+    if(!String(row.slug||'').trim()){
+      let base=slugify(row.name)||`sponsor-${row.id}`;
+      let slug=base;
+      let n=2;
+      while(await env.DB.prepare(`SELECT id FROM sponsors WHERE slug=? AND id<>?`).bind(slug,row.id).first()){
+        slug=`${base}-${n++}`;
+      }
+      await env.DB.prepare(`UPDATE sponsors SET slug=? WHERE id=?`).bind(slug,row.id).run();
+    }
+  }
+}
+
+function sponsorPromoLive(s){
+  if(!Number(s.promo_active||0))return false;
+  const now=Date.now();
+  if(s.promo_start && new Date(s.promo_start).getTime()>now)return false;
+  if(s.promo_end && new Date(s.promo_end).getTime()<now)return false;
+  return true;
+}
+function mapSponsorRow(s){
+  return {
+    ...s,
+    gallery:safeJsonParse(s.gallery_json,[]),
+    promo_is_live:sponsorPromoLive(s)
+  };
 }
 
 async function route(request, env, path) {
@@ -517,56 +563,6 @@ async function route(request, env, path) {
     } catch { return json({error:'Email già registrata'},409); }
   }
 
-
-
-  if (path === 'public/formula' && method==='GET') {
-    const rows=(await env.DB.prepare(`SELECT id,section_key,kicker,title,body,items_json,style,sort_order
-      FROM formula_sections WHERE is_active=1 ORDER BY sort_order,id`).all()).results;
-    return json({sections:rows.map(r=>({...r,items:safeJsonParse(r.items_json,[])}))});
-  }
-
-  if (path === 'admin/formula' && method==='GET') {
-    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const rows=(await env.DB.prepare(`SELECT * FROM formula_sections ORDER BY sort_order,id`).all()).results;
-    return json({sections:rows.map(r=>({...r,items:safeJsonParse(r.items_json,[])}))});
-  }
-
-  if (path === 'admin/formula' && method==='POST') {
-    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const d=await body(request);
-    if(!String(d.title||'').trim())return json({error:'Inserisci il titolo'},400);
-    const key=String(d.section_key||('section_'+Date.now())).trim();
-    const items=Array.isArray(d.items)?d.items:[];
-    const r=await env.DB.prepare(`INSERT INTO formula_sections
-      (section_key,kicker,title,body,items_json,style,sort_order,is_active)
-      VALUES(?,?,?,?,?,?,?,?)`)
-      .bind(key,String(d.kicker||'').trim(),String(d.title).trim(),String(d.body||'').trim(),
-        JSON.stringify(items),String(d.style||'cards'),Number(d.sort_order||100),d.is_active===false?0:1).run();
-    return json({ok:true,id:r.meta.last_row_id},201);
-  }
-
-  if (path.match(/^admin\/formula\/\d+$/)) {
-    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    const id=Number(path.split('/').pop());
-
-    if(method==='PUT'){
-      const d=await body(request);
-      if(!String(d.title||'').trim())return json({error:'Inserisci il titolo'},400);
-      const items=Array.isArray(d.items)?d.items:[];
-      await env.DB.prepare(`UPDATE formula_sections SET
-        kicker=?,title=?,body=?,items_json=?,style=?,sort_order=?,is_active=?,updated_at=CURRENT_TIMESTAMP
-        WHERE id=?`)
-        .bind(String(d.kicker||'').trim(),String(d.title).trim(),String(d.body||'').trim(),
-          JSON.stringify(items),String(d.style||'cards'),Number(d.sort_order||100),
-          d.is_active===false?0:1,id).run();
-      return json({ok:true});
-    }
-
-    if(method==='DELETE'){
-      await env.DB.prepare('DELETE FROM formula_sections WHERE id=?').bind(id).run();
-      return json({ok:true});
-    }
-  }
 
   if (path === 'public/faqs' && method==='GET') {
     const categories=(await env.DB.prepare(`SELECT id,name,icon,sort_order FROM faq_categories WHERE is_active=1 ORDER BY sort_order,name`).all()).results;
@@ -1695,6 +1691,110 @@ async function route(request, env, path) {
     await audit(env,user.id,'create_reset_link','user',id); return json({ok:true,resetUrl:`${new URL(request.url).origin}/#/reset-password/${token}`});
   }
 
+
+  if (path === 'public/sponsors' && method==='GET') {
+    const rows=(await env.DB.prepare(`SELECT s.*,t.name team_name
+      FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id
+      WHERE s.is_active=1
+      ORDER BY s.is_featured DESC,s.sort_order,s.name`).all()).results;
+    return json({sponsors:rows.map(mapSponsorRow)});
+  }
+
+  if (path.startsWith('public/sponsor/') && method==='GET') {
+    const slug=decodeURIComponent(path.split('/').pop());
+    const row=await env.DB.prepare(`SELECT s.*,t.name team_name
+      FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id
+      WHERE s.slug=? AND s.is_active=1`).bind(slug).first();
+    if(!row)return json({error:'Sponsor non trovato'},404);
+    return json({sponsor:mapSponsorRow(row)});
+  }
+
+  if (path === 'admin/sponsors' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const rows=(await env.DB.prepare(`SELECT s.*,t.name team_name
+      FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id
+      ORDER BY s.is_featured DESC,s.sort_order,s.name`).all()).results;
+    return json({sponsors:rows.map(mapSponsorRow)});
+  }
+
+  if (path === 'admin/sponsors' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    if(!String(d.name||'').trim())return json({error:'Inserisci il nome dello sponsor'},400);
+
+    let base=slugify(d.slug||d.name)||`sponsor-${Date.now()}`;
+    let slug=base,n=2;
+    while(await env.DB.prepare('SELECT id FROM sponsors WHERE slug=?').bind(slug).first())slug=`${base}-${n++}`;
+
+    const result=await env.DB.prepare(`INSERT INTO sponsors(
+      name,slug,logo_url,cover_url,category,partner_tier,description,
+      phone,whatsapp,email,address,website_url,google_url,
+      instagram_url,facebook_url,tiktok_url,gallery_json,
+      promo_active,promo_title,promo_description,promo_code,promo_terms,promo_start,promo_end,
+      level,team_id,is_featured,is_active,sort_order,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      .bind(
+        String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',
+        d.partner_tier||'partner',d.description||'',d.phone||'',d.whatsapp||'',d.email||'',
+        d.address||'',d.website_url||'',d.google_url||'',d.instagram_url||'',d.facebook_url||'',
+        d.tiktok_url||'',JSON.stringify(Array.isArray(d.gallery)?d.gallery:[]),
+        d.promo_active?1:0,d.promo_title||'',d.promo_description||'',d.promo_code||'',d.promo_terms||'',
+        d.promo_start||null,d.promo_end||null,
+        d.level==='team'?'team':'league',
+        d.level==='team'&&d.team_id?Number(d.team_id):null,
+        d.is_featured?1:0,d.is_active===false?0:1,Number(d.sort_order||100)
+      ).run();
+    await audit(env,user.id,'create','sponsor',result.meta.last_row_id,d);
+    return json({ok:true,id:result.meta.last_row_id,slug},201);
+  }
+
+  if (path.match(/^admin\/sponsors\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+
+    if(method==='PUT'){
+      const d=await body(request);
+      if(!String(d.name||'').trim())return json({error:'Inserisci il nome dello sponsor'},400);
+      const existing=await env.DB.prepare('SELECT * FROM sponsors WHERE id=?').bind(id).first();
+      if(!existing)return json({error:'Sponsor non trovato'},404);
+
+      let base=slugify(d.slug||d.name)||`sponsor-${id}`;
+      let slug=base,n=2;
+      while(await env.DB.prepare('SELECT id FROM sponsors WHERE slug=? AND id<>?').bind(slug,id).first())slug=`${base}-${n++}`;
+
+      await env.DB.prepare(`UPDATE sponsors SET
+        name=?,slug=?,logo_url=?,cover_url=?,category=?,partner_tier=?,description=?,
+        phone=?,whatsapp=?,email=?,address=?,website_url=?,google_url=?,
+        instagram_url=?,facebook_url=?,tiktok_url=?,gallery_json=?,
+        promo_active=?,promo_title=?,promo_description=?,promo_code=?,promo_terms=?,promo_start=?,promo_end=?,
+        level=?,team_id=?,is_featured=?,is_active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`)
+        .bind(
+          String(d.name).trim(),slug,d.logo_url||'',d.cover_url||'',d.category||'',
+          d.partner_tier||'partner',d.description||'',d.phone||'',d.whatsapp||'',d.email||'',
+          d.address||'',d.website_url||'',d.google_url||'',d.instagram_url||'',d.facebook_url||'',
+          d.tiktok_url||'',JSON.stringify(Array.isArray(d.gallery)?d.gallery:[]),
+          d.promo_active?1:0,d.promo_title||'',d.promo_description||'',d.promo_code||'',d.promo_terms||'',
+          d.promo_start||null,d.promo_end||null,
+          d.level==='team'?'team':'league',
+          d.level==='team'&&d.team_id?Number(d.team_id):null,
+          d.is_featured?1:0,d.is_active===false?0:1,Number(d.sort_order||100),id
+        ).run();
+      await audit(env,user.id,'update','sponsor',id,d);
+      return json({ok:true,slug});
+    }
+
+    if(method==='DELETE'){
+      await env.DB.prepare('DELETE FROM sponsors WHERE id=?').bind(id).run();
+      await audit(env,user.id,'delete','sponsor',id,{});
+      return json({ok:true});
+    }
+  }
+
+  if (path === 'team/sponsors' || path.match(/^team\/sponsors\/\d+$/)) {
+    return json({error:'La gestione sponsor è riservata all’Admin'},403);
+  }
+
   if (path === 'admin/sponsors' || path === 'team/sponsors') {
     const denied=requireAnyRole(user,'super_admin','organizer','team_manager'); if(denied)return denied;
     if(method==='GET') { const q=hasRole(user,'team_manager')?env.DB.prepare("SELECT * FROM sponsors WHERE team_id=? AND level='team' ORDER BY is_featured DESC,name").bind(user.team_id):env.DB.prepare('SELECT s.*,t.name team_name FROM sponsors s LEFT JOIN teams t ON t.id=s.team_id ORDER BY s.level,s.is_featured DESC,s.name'); return json({sponsors:(await q.all()).results}); }
@@ -1892,6 +1992,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureFormulaSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
