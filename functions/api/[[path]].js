@@ -452,6 +452,37 @@ async function ensureFormulaSchema(env){
   }
 }
 
+
+async function ensureCustomCompetitionsSchema(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS custom_competitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    competition_type TEXT NOT NULL DEFAULT 'cup',
+    format TEXT NOT NULL DEFAULT 'knockout',
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned',
+    start_date TEXT,
+    end_date TEXT,
+    participant_count INTEGER,
+    prize TEXT NOT NULL DEFAULT '',
+    is_public INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_custom_competitions_season
+    ON custom_competitions(season_id,sort_order,id)`).run();
+}
+
+function mapCustomCompetition(row){
+  return {
+    ...row,
+    is_public:Number(row.is_public||0)===1
+  };
+}
+
 async function route(request, env, path) {
   const method = request.method;
   const user = await currentUser(request, env);
@@ -794,6 +825,11 @@ async function route(request, env, path) {
         };
       }
 
+      const customCompetitions=(await env.DB.prepare(`SELECT *
+        FROM custom_competitions
+        WHERE season_id=? AND is_public=1
+        ORDER BY sort_order,id`).bind(season.id).all()).results;
+
       return json({
         season,
         seasons:tableData.seasons||[],
@@ -810,7 +846,8 @@ async function route(request, env, path) {
           final:finalMatch,
           winner:miniWinner,
           qualified:(tableData.standings||[]).slice(1,5)
-        }
+        },
+        custom_competitions:customCompetitions.map(mapCustomCompetition)
       });
     }catch(error){
       console.error('public/competitions failed',error);
@@ -818,6 +855,102 @@ async function route(request, env, path) {
         error:'Impossibile caricare la sezione Competizioni',
         detail:error?.message||String(error)
       },500);
+    }
+  }
+
+
+  if (path === 'admin/competitions' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+
+    if(!Number(d.season_id))return json({error:'Seleziona una stagione'},400);
+    if(!String(d.name||'').trim())return json({error:'Inserisci il nome della competizione'},400);
+
+    const allowedTypes=['cup','supercup','tournament','friendly','other'];
+    const allowedFormats=['knockout','groups_knockout','round_robin','single_match','custom'];
+    const allowedStatus=['planned','open','in_progress','completed','cancelled'];
+
+    let base=slugify(d.name)||`competizione-${Date.now()}`;
+    let slug=base,n=2;
+    while(await env.DB.prepare('SELECT id FROM custom_competitions WHERE slug=?').bind(slug).first()){
+      slug=`${base}-${n++}`;
+    }
+
+    const result=await env.DB.prepare(`INSERT INTO custom_competitions(
+      season_id,name,slug,competition_type,format,description,status,
+      start_date,end_date,participant_count,prize,is_public,sort_order
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+      Number(d.season_id),
+      String(d.name).trim(),
+      slug,
+      allowedTypes.includes(d.competition_type)?d.competition_type:'cup',
+      allowedFormats.includes(d.format)?d.format:'knockout',
+      String(d.description||'').trim(),
+      allowedStatus.includes(d.status)?d.status:'planned',
+      d.start_date||null,
+      d.end_date||null,
+      d.participant_count?Number(d.participant_count):null,
+      String(d.prize||'').trim(),
+      d.is_public===false?0:1,
+      Number(d.sort_order||100)
+    ).run();
+
+    await audit(env,user.id,'create','competition',result.meta.last_row_id,d);
+    return json({ok:true,id:result.meta.last_row_id,slug},201);
+  }
+
+  if (path.match(/^admin\/competitions\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+
+    if(method==='PUT'){
+      const d=await body(request);
+      if(!Number(d.season_id))return json({error:'Seleziona una stagione'},400);
+      if(!String(d.name||'').trim())return json({error:'Inserisci il nome della competizione'},400);
+
+      const existing=await env.DB.prepare('SELECT * FROM custom_competitions WHERE id=?').bind(id).first();
+      if(!existing)return json({error:'Competizione non trovata'},404);
+
+      const allowedTypes=['cup','supercup','tournament','friendly','other'];
+      const allowedFormats=['knockout','groups_knockout','round_robin','single_match','custom'];
+      const allowedStatus=['planned','open','in_progress','completed','cancelled'];
+
+      let base=slugify(d.name)||`competizione-${id}`;
+      let slug=base,n=2;
+      while(await env.DB.prepare('SELECT id FROM custom_competitions WHERE slug=? AND id<>?')
+        .bind(slug,id).first()){
+        slug=`${base}-${n++}`;
+      }
+
+      await env.DB.prepare(`UPDATE custom_competitions SET
+        season_id=?,name=?,slug=?,competition_type=?,format=?,description=?,status=?,
+        start_date=?,end_date=?,participant_count=?,prize=?,is_public=?,sort_order=?,
+        updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`).bind(
+          Number(d.season_id),
+          String(d.name).trim(),
+          slug,
+          allowedTypes.includes(d.competition_type)?d.competition_type:'cup',
+          allowedFormats.includes(d.format)?d.format:'knockout',
+          String(d.description||'').trim(),
+          allowedStatus.includes(d.status)?d.status:'planned',
+          d.start_date||null,
+          d.end_date||null,
+          d.participant_count?Number(d.participant_count):null,
+          String(d.prize||'').trim(),
+          d.is_public===false?0:1,
+          Number(d.sort_order||100),
+          id
+        ).run();
+
+      await audit(env,user.id,'update','competition',id,d);
+      return json({ok:true,slug});
+    }
+
+    if(method==='DELETE'){
+      await env.DB.prepare('DELETE FROM custom_competitions WHERE id=?').bind(id).run();
+      await audit(env,user.id,'delete','competition',id,{});
+      return json({ok:true});
     }
   }
 
@@ -893,12 +1026,17 @@ async function route(request, env, path) {
           ) WHEN 'semifinal' THEN 1 ELSE 2 END,
           datetime(m.match_date),m.id`).bind(season.id).all()).results;
 
+      const customCompetitions=(await env.DB.prepare(`SELECT *
+        FROM custom_competitions WHERE season_id=?
+        ORDER BY sort_order,id`).bind(season.id).all()).results;
+
       return json({
         season,
         seasons:tableData.seasons||[],
         standings:tableData.standings||[],
         phases,
-        mini_matches:miniMatches
+        mini_matches:miniMatches,
+        custom_competitions:customCompetitions.map(mapCustomCompetition)
       });
     }catch(error){
       console.error('admin/competitions failed',error);
@@ -2269,6 +2407,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); await ensureFormulaSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); await ensureFormulaSchema(context.env); await ensureCustomCompetitionsSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
