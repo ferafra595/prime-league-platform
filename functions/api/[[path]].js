@@ -562,6 +562,25 @@ async function createNewsDraftIfMissing(env,{title,excerpt,body,category='campio
   return r.meta.last_row_id;
 }
 
+
+function editorialPick(seed,variants){
+  const s=String(seed??'prime-league');
+  let h=2166136261;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}
+  return variants[Math.abs(h>>>0)%variants.length];
+}
+function editorialNumber(seed,max){
+  const s=String(seed??'');
+  let h=0;
+  for(let i=0;i<s.length;i++)h=(Math.imul(h,31)+s.charCodeAt(i))|0;
+  return Math.abs(h)%max;
+}
+function joinNatural(items){
+  const a=items.filter(Boolean);
+  if(a.length<=1)return a[0]||'';
+  return `${a.slice(0,-1).join(', ')} e ${a[a.length-1]}`;
+}
+
 async function buildMatchNewsDraft(env,matchId){
   const match=await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
     p.first_name mvp_first_name,p.last_name mvp_last_name
@@ -572,48 +591,80 @@ async function buildMatchNewsDraft(env,matchId){
     WHERE m.id=?`).bind(matchId).first();
   if(!match||match.status!=='published')return null;
 
-  const scorers=(await env.DB.prepare(`SELECT p.first_name,p.last_name,t.name team_name,
-      SUM(e.quantity) goals
-    FROM match_events e
-    JOIN players p ON p.id=e.player_id
-    JOIN teams t ON t.id=e.team_id
+  const scorers=(await env.DB.prepare(`SELECT p.first_name,p.last_name,t.name team_name,SUM(e.quantity) goals
+    FROM match_events e JOIN players p ON p.id=e.player_id JOIN teams t ON t.id=e.team_id
     WHERE e.match_id=? AND e.event_type='goal'
-    GROUP BY p.id,t.id
-    ORDER BY t.id,goals DESC,p.last_name`).bind(matchId).all()).results;
+    GROUP BY p.id,t.id ORDER BY goals DESC,p.last_name`).bind(matchId).all()).results;
 
   const home=Number(match.home_score||0),away=Number(match.away_score||0);
-  let title;
-  if(home>away)title=`${match.home_name} supera ${match.away_name} ${home}-${away}`;
-  else if(away>home)title=`${match.away_name} passa contro ${match.home_name}: ${away}-${home}`;
-  else title=`Parità tra ${match.home_name} e ${match.away_name}: ${home}-${away}`;
-
-  const scorerText=scorers.length
-    ? scorers.map(x=>`${x.first_name} ${x.last_name}${Number(x.goals)>1?` (${x.goals})`:''}`).join(', ')
-    : '';
+  const winner=home>away?match.home_name:away>home?match.away_name:null;
+  const loser=home>away?match.away_name:away>home?match.home_name:null;
+  const winScore=home>away?`${home}-${away}`:`${away}-${home}`;
   const mvp=match.mvp_first_name?`${match.mvp_first_name} ${match.mvp_last_name}`:'';
+  const scorerNames=scorers.map(x=>`${x.first_name} ${x.last_name}${Number(x.goals)>1?` (${x.goals})`:''}`);
+  const seed=`match:${matchId}:${home}:${away}:${match.round_name}`;
 
-  const excerpt=`${match.round_name||'Prime League'}: ${match.home_name} ${home}-${away} ${match.away_name}.`;
-  let storyLead;
-  if(home>away){
-    storyLead=`${match.home_name} conquista i tre punti contro ${match.away_name} e chiude la gara sul ${home}-${away}. Una vittoria che entra subito nel racconto di ${match.round_name||'questa giornata'} della Prime League.`;
-  }else if(away>home){
-    storyLead=`${match.away_name} esce vincente dalla sfida contro ${match.home_name}, imponendosi ${away}-${home}. Il risultato diventa uno dei verdetti ufficiali di ${match.round_name||'questa giornata'} della Prime League.`;
-  }else{
-    storyLead=`Equilibrio fino al risultato finale tra ${match.home_name} e ${match.away_name}: la sfida si chiude ${home}-${away}. Un punto per parte in ${match.round_name||'questa giornata'} della Prime League.`;
-  }
+  const title=winner
+    ? editorialPick(seed,[
+        `${winner}, tre punti contro ${loser}: ${winScore}`,
+        `${winner} firma la vittoria: ${winScore} su ${loser}`,
+        `${match.round_name||'Prime League'}: sorride ${winner}`,
+        `${winner} supera ${loser} nella sfida di Prime League`,
+        `Il verdetto è ${winScore}: ${winner} batte ${loser}`,
+        `${winner} fa sua la sfida contro ${loser}`
+      ])
+    : editorialPick(seed,[
+        `${match.home_name}-${match.away_name}: finisce ${home}-${away}`,
+        `Un punto a testa tra ${match.home_name} e ${match.away_name}`,
+        `Equilibrio Prime League: ${home}-${away} tra ${match.home_name} e ${match.away_name}`,
+        `${match.home_name} e ${match.away_name} si dividono la posta`
+      ]);
 
-  const parts=[
-    storyLead,
-    scorerText?`A lasciare il segno nel tabellino sono ${scorerText}. I gol registrati nel referto ufficiale definiscono il risultato della gara.`:'',
-    mvp?`${mvp} viene indicato come MVP della partita, aggiungendo un riconoscimento individuale alla prestazione della serata.`:'',
-    `Con l’approvazione del referto, risultato, presenze e statistiche dei giocatori vengono aggiornati automaticamente sulla piattaforma Prime League.`
-  ].filter(Boolean);
+  const opening=winner
+    ? editorialPick(seed+'open',[
+        `${winner} porta a casa la sfida contro ${loser}. Il tabellone dice ${winScore} e consegna tre punti importanti nel percorso di ${match.round_name||'questa fase di campionato'}.`,
+        `La sfida tra ${match.home_name} e ${match.away_name} ha un vincitore: ${winner}. Il ${winScore} entra nel quadro ufficiale di ${match.round_name||'questa giornata'} e aggiorna la corsa in campionato.`,
+        `Tre punti per ${winner}, che chiude sul ${winScore} il confronto con ${loser}. Un nuovo risultato ufficiale prende posto nella stagione Prime League.`,
+        `${match.round_name||'La giornata'} consegna a ${winner} una vittoria contro ${loser}. Il risultato finale, ${winScore}, viene ora registrato ufficialmente sulla piattaforma.`
+      ])
+    : editorialPick(seed+'open',[
+        `${match.home_name} e ${match.away_name} chiudono senza un vincitore. Il ${home}-${away} assegna un punto per parte e aggiorna il quadro di ${match.round_name||'questa giornata'}.`,
+        `La sfida resta in equilibrio fino al verdetto ufficiale: ${home}-${away} tra ${match.home_name} e ${match.away_name}.`,
+        `Nessuna delle due squadre riesce a prendersi l’intera posta: ${match.home_name} e ${match.away_name} terminano ${home}-${away}.`
+      ]);
 
-  const id=await createNewsDraftIfMissing(env,{
-    title,excerpt,body:parts.join('\n\n'),category:'risultati',
-    source_type:'match',source_id:matchId,cover_url:home>away?match.home_logo:away>home?match.away_logo:''
+  const scorerPara=scorerNames.length?editorialPick(seed+'scorers',[
+    `Nel tabellino dei marcatori trovano spazio ${joinNatural(scorerNames)}. Sono loro i nomi associati ai gol registrati nel referto ufficiale.`,
+    `A costruire il punteggio sono le reti di ${joinNatural(scorerNames)}. Il referto assegna a loro le marcature della gara.`,
+    `I protagonisti sotto porta sono ${joinNatural(scorerNames)}: le loro reti compongono il risultato definitivo della partita.`,
+    `Sul fronte realizzativo emergono ${joinNatural(scorerNames)}, presenti nel referto tra gli autori dei gol.`
+  ]):'';
+
+  const mvpPara=mvp?editorialPick(seed+'mvp',[
+    `${mvp} completa il quadro della serata con il riconoscimento di MVP della partita.`,
+    `Il premio individuale della gara va a ${mvp}, indicato come MVP.`,
+    `Tra i protagonisti c’è anche ${mvp}: per lui arriva il riconoscimento di MVP del match.`,
+    `${mvp} viene scelto come MVP e aggiunge il proprio nome ai protagonisti della sfida.`
+  ]):'';
+
+  const closing=editorialPick(seed+'close',[
+    `Con il referto approvato, il risultato entra ufficialmente negli archivi Prime League e aggiorna automaticamente classifica e statistiche.`,
+    `Da questo momento il verdetto è ufficiale: la piattaforma recepisce il referto e aggiorna tutti i dati collegati alla gara.`,
+    `L’approvazione definitiva del referto rende disponibili sulla piattaforma risultato e statistiche aggiornate.`,
+    `La gara passa così agli archivi ufficiali della lega, con tutti i dati statistici aggiornati in automatico.`
+  ]);
+
+  const excerpt=editorialPick(seed+'excerpt',[
+    `${match.round_name||'Prime League'}: ${match.home_name} ${home}-${away} ${match.away_name}. Il racconto e i protagonisti della sfida.`,
+    `${home}-${away} tra ${match.home_name} e ${match.away_name}: ecco cosa lascia la partita.`,
+    `Il verdetto di ${match.home_name}-${match.away_name} e i protagonisti registrati nel referto ufficiale.`
+  ]);
+
+  return createNewsDraftIfMissing(env,{
+    title,excerpt,body:[opening,scorerPara,mvpPara,closing].filter(Boolean).join('\n\n'),
+    category:'risultati',source_type:'match',source_id:matchId,
+    cover_url:winner===match.home_name?match.home_logo:winner===match.away_name?match.away_logo:''
   });
-  return id;
 }
 
 async function buildRoundNewsDraft(env,seasonId,roundName){
@@ -662,14 +713,101 @@ async function buildPlayerNewsDraft(env,playerId){
   }
 
   const name=`${p.first_name} ${p.last_name}`;
+  const appearances=Number(stats.appearances||0),goals=Number(stats.goals||0),assists=Number(stats.assists||0),mvps=Number(stats.mvps||0);
+  const seed=`player:${playerId}:${appearances}:${goals}:${assists}:${mvps}`;
+  const metrics=[
+    {key:'goals',value:goals,score:goals*3},
+    {key:'assists',value:assists,score:assists*3},
+    {key:'mvps',value:mvps,score:mvps*4},
+    {key:'appearances',value:appearances,score:appearances}
+  ].sort((a,b)=>b.score-a.score);
+  const focus=metrics[0].value>0?metrics[0].key:'profile';
+
+  const titles={
+    goals:[
+      `${name}, i gol raccontano il suo impatto con ${p.team_name}`,
+      `Dentro i numeri di ${name}: il peso offensivo per ${p.team_name}`,
+      `${name} e il feeling con il gol in Prime League`,
+      `Focus ${p.team_name}: sotto la lente c’è ${name}`
+    ],
+    assists:[
+      `${name}, il valore dell’ultimo passaggio`,
+      `Gli assist di ${name} nel percorso di ${p.team_name}`,
+      `${name}: quando il contributo passa anche dai compagni`,
+      `Prime League, focus su ${name} e la sua produzione offensiva`
+    ],
+    mvps:[
+      `${name}, le prestazioni che valgono il riconoscimento MVP`,
+      `Quando la partita lascia il segno: focus su ${name}`,
+      `${name} tra i protagonisti di ${p.team_name}`,
+      `MVP e rendimento: i numeri di ${name}`
+    ],
+    appearances:[
+      `${name}, presenza dopo presenza con ${p.team_name}`,
+      `Il percorso di ${name} nella stagione Prime League`,
+      `${name}: continuità e numeri con ${p.team_name}`,
+      `Dentro la stagione di ${name}`
+    ],
+    profile:[
+      `${name}: una storia ancora da scrivere con ${p.team_name}`,
+      `Conosciamo ${name}, giocatore di ${p.team_name}`,
+      `${name} entra nel racconto della Prime League`,
+      `Focus giocatore: ${name}`
+    ]
+  };
+  const title=editorialPick(seed+'title',titles[focus]);
+
+  const openings={
+    goals:[
+      `${goals} gol sono il dato che salta subito all’occhio guardando la stagione di ${name}. Con la maglia di ${p.team_name}, il suo contributo offensivo è già entrato nei numeri della Prime League.`,
+      `Per raccontare fin qui il percorso di ${name} si può partire dalla porta avversaria: ${goals} reti registrate con ${p.team_name}. È il dato più evidente della sua stagione.`,
+      `${name} sta costruendo la propria stagione anche attraverso i gol. Il conteggio è arrivato a ${goals}, all’interno del percorso di ${p.team_name}.`
+    ],
+    assists:[
+      `Non ci sono soltanto i gol per misurare un giocatore. Nel caso di ${name}, il dato degli assist — ${assists} — racconta una parte importante del contributo dato a ${p.team_name}.`,
+      `${name} ha già lasciato ${assists} assist nel percorso di ${p.team_name}. Un numero che mette in evidenza il contributo alla produzione offensiva della squadra.`,
+      `L’ultimo passaggio è uno dei numeri da osservare nella stagione di ${name}: sono ${assists} gli assist registrati fin qui.`
+    ],
+    mvps:[
+      `Essere scelto MVP significa emergere all’interno di una singola partita. ${name} ha già raccolto ${mvps} riconoscimenti di questo tipo con ${p.team_name}.`,
+      `Nel percorso di ${name} spiccano ${mvps} premi MVP. Un dato individuale che accompagna la sua stagione con ${p.team_name}.`,
+      `${mvps} volte MVP: è da qui che parte il focus dedicato a ${name}, protagonista della stagione di ${p.team_name}.`
+    ],
+    appearances:[
+      `La stagione di ${name} passa prima di tutto dalla continuità: ${appearances} presenze registrate con ${p.team_name}.`,
+      `${name} ha preso parte a ${appearances} gare di Prime League. Presenza dopo presenza, prende forma il suo percorso con ${p.team_name}.`,
+      `Sono ${appearances} le presenze che raccontano fin qui il cammino di ${name} nella rosa di ${p.team_name}.`
+    ],
+    profile:[
+      `Ogni stagione parte da una pagina bianca. Quella di ${name}, nella rosa di ${p.team_name}, è ancora pronta a riempirsi di numeri e partite.`,
+      `${name} fa parte del gruppo di ${p.team_name}. Le statistiche inizieranno a raccontare il suo percorso con il procedere della stagione.`,
+      `C’è spazio anche per ${name} nel racconto di ${p.team_name}: il suo percorso Prime League è appena all’inizio.`
+    ]
+  };
+
+  const opening=editorialPick(seed+'open',openings[focus]);
+  const statLine=editorialPick(seed+'stats',[
+    `Il quadro completo dice ${appearances} presenze, ${goals} gol, ${assists} assist e ${mvps} MVP.`,
+    `Guardando tutti i dati insieme: ${appearances} presenze · ${goals} gol · ${assists} assist · ${mvps} MVP.`,
+    `Le statistiche ufficiali registrano finora ${appearances} presenze, con ${goals} reti, ${assists} assist e ${mvps} riconoscimenti MVP.`,
+    `Il suo bilancio sulla piattaforma comprende ${appearances} presenze, ${goals} gol, ${assists} assist e ${mvps} premi MVP.`
+  ]);
+  const closing=editorialPick(seed+'close',[
+    `Sono numeri destinati a cambiare con il campionato: ogni nuovo referto approvato aggiornerà automaticamente la sua scheda.`,
+    `La fotografia è quella di oggi. Con le prossime giornate, la scheda continuerà ad aggiornarsi insieme alla stagione.`,
+    `Il resto lo dirà il campo: la piattaforma continuerà a seguire automaticamente l’evoluzione dei suoi numeri.`,
+    `Statistiche in movimento, quindi: ogni presenza e ogni evento ufficiale entreranno direttamente nella sua scheda Prime League.`
+  ]);
+
   return {
-    title:`Focus giocatore: ${name}`,
-    excerpt:`Numeri e percorso di ${name}, ${p.team_name}.`,
-    body:[
-      `${name} veste la maglia di ${p.team_name} e costruisce il proprio percorso nella stagione Prime League partita dopo partita.`,
-      `Il suo bilancio attuale racconta ${Number(stats.appearances||0)} presenze, ${Number(stats.goals||0)} gol, ${Number(stats.assists||0)} assist e ${Number(stats.mvps||0)} riconoscimenti MVP.`,
-      `Numeri che continueranno ad aggiornarsi automaticamente nel corso della stagione e che permettono di seguire l’evoluzione del giocatore all’interno della competizione.`
-    ].join('\n\n'),
+    title,
+    excerpt:editorialPick(seed+'excerpt',[
+      `Numeri, rendimento e percorso: il focus Prime League dedicato a ${name}.`,
+      `Uno sguardo alla stagione di ${name} con la maglia di ${p.team_name}.`,
+      `Le statistiche raccontano il percorso di ${name}: ecco la fotografia attuale.`,
+      `${name} sotto la lente: i dati aggiornati della sua stagione.`
+    ]),
+    body:[opening,statLine,closing].join('\n\n'),
     category:'giocatori',source_type:'player',source_id:playerId,cover_url:p.photo_url||p.team_logo||''
   };
 }
