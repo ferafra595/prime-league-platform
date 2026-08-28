@@ -425,6 +425,33 @@ function mapSponsorRow(s){
   };
 }
 
+async function ensureFormulaSchema(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS formula_sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    section_key TEXT NOT NULL UNIQUE,
+    kicker TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    items_json TEXT NOT NULL DEFAULT '[]',
+    style TEXT NOT NULL DEFAULT 'cards',
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+
+  const count=await env.DB.prepare('SELECT COUNT(*) c FROM formula_sections').first();
+  if(Number(count?.c||0)===0){
+    const seed=[{"section_key": "overview", "kicker": "01 · Campionato", "title": "Una stagione di circa 5 mesi", "body": "La Prime League è un campionato strutturato con gare di andata e ritorno. Ogni squadra affronta tutte le altre due volte nel corso di una stagione che si sviluppa indicativamente nell’arco di circa cinque mesi. Calendario, risultati e classifica vengono aggiornati durante tutta la competizione.", "items": ["Campionato con gare di andata e ritorno", "Durata indicativa di circa 5 mesi", "Calendario organizzato per giornate", "Classifica aggiornata durante la stagione"], "style": "intro", "sort_order": 10}, {"section_key": "matchday", "kicker": "02 · Giornata di gara", "title": "Ogni partita fa parte di un sistema organizzato", "body": "Le gare non sono eventi isolati: ogni partita è inserita nel calendario ufficiale della stagione e viene gestita attraverso convocazioni, distinta, titolari, riserve, presenze, risultato ed eventi della gara.", "items": ["Convocati e distinta ufficiale", "Titolari e riserve", "Presenze effettive, compresi i subentrati", "Gol e assist", "Ammonizioni ed espulsioni", "MVP e dati della partita"], "style": "cards", "sort_order": 20}, {"section_key": "players", "kicker": "03 · Giocatori", "title": "Tesseramenti e identità ufficiale", "body": "Ogni partecipante viene inserito nella rosa ufficiale della propria squadra. Il giocatore dispone di una scheda personale all’interno della piattaforma e di un cartellino identificativo collegato alla stagione.", "items": ["Tesseramento del giocatore", "Cartellino giocatore", "Numero di maglia e ruolo", "Foto e profilo personale", "Statistiche individuali", "Storico delle presenze e degli eventi"], "style": "cards", "sort_order": 30}, {"section_key": "referees", "kicker": "04 · Arbitraggio", "title": "Arbitri e gestione disciplinare", "body": "Le partite sono dirette da arbitri incaricati per la competizione. L’arbitro dispone di un accesso dedicato per compilare il proprio referto e registrare gli eventi disciplinari della gara.", "items": ["Arbitro designato per la gara", "Referto arbitrale", "Ammonizioni", "Espulsioni", "Segnalazioni disciplinari", "Verifica finale da parte dell’organizzazione"], "style": "cards", "sort_order": 40}, {"section_key": "reports", "kicker": "05 · Referti", "title": "Dati verificati prima della pubblicazione", "body": "Le squadre possono inviare il proprio referto e l’arbitro compila quello di propria competenza. L’organizzazione confronta i dati ricevuti, risolve eventuali differenze e approva il referto definitivo. Solo dopo l’approvazione i dati diventano ufficiali.", "items": ["Referto squadra A", "Referto squadra B", "Referto arbitro", "Confronto automatico degli eventi coincidenti", "Controllo dell’Admin", "Pubblicazione del referto definitivo"], "style": "process", "sort_order": 50}, {"section_key": "statistics", "kicker": "06 · Dati e statistiche", "title": "Il campionato vive anche attraverso i numeri", "body": "Risultati e referti alimentano automaticamente le statistiche della piattaforma. Squadre, giocatori e pubblico possono seguire l’andamento della stagione attraverso dati aggiornati.", "items": ["Classifica", "Gol", "Assist", "Presenze", "Cartellini", "MVP", "Statistiche dei giocatori", "Statistiche delle squadre"], "style": "cards", "sort_order": 60}, {"section_key": "media", "kicker": "07 · Comunicazione", "title": "Interviste, contenuti e racconto social", "body": "Prime League non si limita alle partite. La competizione viene raccontata attraverso contenuti digitali pensati per dare visibilità alle squadre, ai giocatori, agli sponsor e ai protagonisti della stagione.", "items": ["Interviste ai protagonisti", "Foto e video delle giornate", "Highlights e contenuti partita", "Grafiche risultati e classifiche", "Contenuti social", "News e aggiornamenti della lega"], "style": "media", "sort_order": 70}, {"section_key": "engagement", "kicker": "08 · Community", "title": "Il pubblico partecipa alla stagione", "body": "Attraverso la piattaforma ufficiale il pubblico può seguire la competizione e partecipare alle votazioni aperte dalla lega, senza necessità di creare un account.", "items": ["Votazioni MVP", "Sondaggi ufficiali", "Partite e risultati", "Classifica", "Squadre e giocatori", "News della competizione"], "style": "cards", "sort_order": 80}, {"section_key": "champion", "kicker": "09 · Titolo", "title": "Il primo classificato è Campione Prime League", "body": "Al termine della stagione regolare la squadra che occupa il primo posto della classifica viene proclamata Campione Prime League e conquista il titolo della stagione.", "items": ["Primo posto nella classifica finale", "Titolo di Campione Prime League", "Coppa del campionato", "Premio principale della stagione"], "style": "champion", "sort_order": 90}, {"section_key": "mini_tournament", "kicker": "10 · Fase premio", "title": "Mini torneo dal 2º al 5º posto", "body": "Le squadre classificate dal secondo al quinto posto accedono a un mini torneo separato. Le semifinali sono 2ª contro 5ª e 3ª contro 4ª; le due vincenti disputano la finale. Il mini torneo assegna un premio dedicato e non modifica la classifica finale del campionato.", "items": ["Semifinale 1: 2ª vs 5ª", "Semifinale 2: 3ª vs 4ª", "Finale tra le due vincenti", "Premio separato dal titolo di Campione"], "style": "bracket", "sort_order": 100}, {"section_key": "organization", "kicker": "11 · Organizzazione", "title": "Una competizione gestita durante tutta la stagione", "body": "L’organizzazione coordina calendario, account delle squadre, gestione degli arbitri, referti, comunicazioni, statistiche, votazioni e contenuti ufficiali. L’obiettivo è offrire una competizione ordinata e un’esperienza chiara sia dentro che fuori dal campo.", "items": ["Gestione calendario e partite", "Gestione squadre e giocatori", "Coordinamento arbitrale", "Approvazione dei referti", "Aggiornamento della piattaforma", "Comunicazione e contenuti ufficiali"], "style": "organization", "sort_order": 110}];
+    for(const s of seed){
+      await env.DB.prepare(`INSERT INTO formula_sections
+        (section_key,kicker,title,body,items_json,style,sort_order,is_active)
+        VALUES(?,?,?,?,?,?,?,1)`)
+        .bind(s.section_key,s.kicker,s.title,s.body,JSON.stringify(s.items||[]),s.style,s.sort_order).run();
+    }
+  }
+}
+
 async function route(request, env, path) {
   const method = request.method;
   const user = await currentUser(request, env);
@@ -571,6 +598,56 @@ async function route(request, env, path) {
       await setExtendedRole(env, created.meta.last_row_id, 'fan');
       return json({ok:true},201);
     } catch { return json({error:'Email già registrata'},409); }
+  }
+
+
+  if (path === 'public/formula' && method==='GET') {
+    const rows=(await env.DB.prepare(`SELECT id,section_key,kicker,title,body,items_json,style,sort_order
+      FROM formula_sections WHERE is_active=1 ORDER BY sort_order,id`).all()).results;
+    return json({sections:rows.map(r=>({...r,items:safeJsonParse(r.items_json,[])}))});
+  }
+
+  if (path === 'admin/formula' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const rows=(await env.DB.prepare(`SELECT * FROM formula_sections ORDER BY sort_order,id`).all()).results;
+    return json({sections:rows.map(r=>({...r,items:safeJsonParse(r.items_json,[])}))});
+  }
+
+  if (path === 'admin/formula' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    if(!String(d.title||'').trim())return json({error:'Inserisci il titolo'},400);
+    const key=String(d.section_key||('section_'+Date.now())).trim();
+    const items=Array.isArray(d.items)?d.items:[];
+    const r=await env.DB.prepare(`INSERT INTO formula_sections
+      (section_key,kicker,title,body,items_json,style,sort_order,is_active)
+      VALUES(?,?,?,?,?,?,?,?)`)
+      .bind(key,String(d.kicker||'').trim(),String(d.title).trim(),String(d.body||'').trim(),
+        JSON.stringify(items),String(d.style||'cards'),Number(d.sort_order||100),d.is_active===false?0:1).run();
+    return json({ok:true,id:r.meta.last_row_id},201);
+  }
+
+  if (path.match(/^admin\/formula\/\d+$/)) {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const id=Number(path.split('/').pop());
+
+    if(method==='PUT'){
+      const d=await body(request);
+      if(!String(d.title||'').trim())return json({error:'Inserisci il titolo'},400);
+      const items=Array.isArray(d.items)?d.items:[];
+      await env.DB.prepare(`UPDATE formula_sections SET
+        kicker=?,title=?,body=?,items_json=?,style=?,sort_order=?,is_active=?,updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`)
+        .bind(String(d.kicker||'').trim(),String(d.title).trim(),String(d.body||'').trim(),
+          JSON.stringify(items),String(d.style||'cards'),Number(d.sort_order||100),
+          d.is_active===false?0:1,id).run();
+      return json({ok:true});
+    }
+
+    if(method==='DELETE'){
+      await env.DB.prepare('DELETE FROM formula_sections WHERE id=?').bind(id).run();
+      return json({ok:true});
+    }
   }
 
 
@@ -2002,6 +2079,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); await ensureFormulaSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
