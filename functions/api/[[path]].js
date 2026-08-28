@@ -593,11 +593,20 @@ async function buildMatchNewsDraft(env,matchId){
   const mvp=match.mvp_first_name?`${match.mvp_first_name} ${match.mvp_last_name}`:'';
 
   const excerpt=`${match.round_name||'Prime League'}: ${match.home_name} ${home}-${away} ${match.away_name}.`;
+  let storyLead;
+  if(home>away){
+    storyLead=`${match.home_name} conquista i tre punti contro ${match.away_name} e chiude la gara sul ${home}-${away}. Una vittoria che entra subito nel racconto di ${match.round_name||'questa giornata'} della Prime League.`;
+  }else if(away>home){
+    storyLead=`${match.away_name} esce vincente dalla sfida contro ${match.home_name}, imponendosi ${away}-${home}. Il risultato diventa uno dei verdetti ufficiali di ${match.round_name||'questa giornata'} della Prime League.`;
+  }else{
+    storyLead=`Equilibrio fino al risultato finale tra ${match.home_name} e ${match.away_name}: la sfida si chiude ${home}-${away}. Un punto per parte in ${match.round_name||'questa giornata'} della Prime League.`;
+  }
+
   const parts=[
-    `${match.home_name} e ${match.away_name} si sono affrontate in ${match.round_name||'una gara di Prime League'}, con il risultato finale di ${home}-${away}.`,
-    scorerText?`Marcatori: ${scorerText}.`:'',
-    mvp?`MVP della partita: ${mvp}.`:'',
-    `Risultato e statistiche sono stati aggiornati dopo l’approvazione del referto ufficiale.`
+    storyLead,
+    scorerText?`A lasciare il segno nel tabellino sono ${scorerText}. I gol registrati nel referto ufficiale definiscono il risultato della gara.`:'',
+    mvp?`${mvp} viene indicato come MVP della partita, aggiungendo un riconoscimento individuale alla prestazione della serata.`:'',
+    `Con l’approvazione del referto, risultato, presenze e statistiche dei giocatori vengono aggiornati automaticamente sulla piattaforma Prime League.`
   ].filter(Boolean);
 
   const id=await createNewsDraftIfMissing(env,{
@@ -621,10 +630,10 @@ async function buildRoundNewsDraft(env,seasonId,roundName){
 
   const excerpt=`Tutti i risultati di ${roundName}${leader?` e la nuova capolista ${leader.name}`:''}.`;
   const body=[
-    `${roundName} è completa. Ecco tutti i risultati ufficiali della giornata:`,
-    results.map(x=>`• ${x}`).join('\n'),
-    leader?`Al termine della giornata, ${leader.name} guida la classifica con ${leader.points} punti.`:'',
-    `Classifica e statistiche sono già aggiornate sulla piattaforma Prime League.`
+    `${roundName} va in archivio con cinque risultati ufficiali che ridisegnano il quadro della settimana Prime League. La giornata si chiude dopo l’approvazione di tutti i referti e la classifica può così aggiornarsi in modo definitivo.`,
+    `I risultati:\n${results.map(x=>`• ${x}`).join('\n')}`,
+    leader?`${leader.name} chiude il turno davanti a tutti con ${leader.points} punti. La corsa al primo posto continua e ogni giornata diventa sempre più importante.`:'',
+    `Gol, assist, presenze, MVP e dati disciplinari sono già aggiornati nelle rispettive sezioni della piattaforma.`
   ].filter(Boolean).join('\n\n');
 
   return createNewsDraftIfMissing(env,{
@@ -657,9 +666,9 @@ async function buildPlayerNewsDraft(env,playerId){
     title:`Focus giocatore: ${name}`,
     excerpt:`Numeri e percorso di ${name}, ${p.team_name}.`,
     body:[
-      `${name} è uno dei giocatori della rosa di ${p.team_name}.`,
-      `Presenze: ${Number(stats.appearances||0)} · Gol: ${Number(stats.goals||0)} · Assist: ${Number(stats.assists||0)} · MVP: ${Number(stats.mvps||0)}.`,
-      `La scheda completa del giocatore e le statistiche aggiornate sono disponibili sulla piattaforma Prime League.`
+      `${name} veste la maglia di ${p.team_name} e costruisce il proprio percorso nella stagione Prime League partita dopo partita.`,
+      `Il suo bilancio attuale racconta ${Number(stats.appearances||0)} presenze, ${Number(stats.goals||0)} gol, ${Number(stats.assists||0)} assist e ${Number(stats.mvps||0)} riconoscimenti MVP.`,
+      `Numeri che continueranno ad aggiornarsi automaticamente nel corso della stagione e che permettono di seguire l’evoluzione del giocatore all’interno della competizione.`
     ].join('\n\n'),
     category:'giocatori',source_type:'player',source_id:playerId,cover_url:p.photo_url||p.team_logo||''
   };
@@ -673,11 +682,10 @@ async function buildCompetitionNewsDraft(env,competitionId){
     title:`${c.name}: la nuova competizione Prime League`,
     excerpt:c.description||`Scopri la nuova competizione ${c.name}.`,
     body:[
-      c.description||`${c.name} entra nel programma ufficiale Prime League.`,
-      `Formula: ${formatMap[c.format]||c.format}.`,
-      c.participant_count?`Partecipanti previsti: ${c.participant_count}.`:'',
-      c.prize?`Premio: ${c.prize}.`:'',
-      c.start_date?`Inizio previsto: ${c.start_date}.`:''
+      c.description||`${c.name} entra nel programma ufficiale Prime League e aggiunge un nuovo obiettivo sportivo alla stagione.`,
+      `La competizione sarà organizzata con formula ${formatMap[c.format]||c.format}${c.participant_count?` e coinvolgerà ${c.participant_count} partecipanti`:''}.`,
+      c.prize?`In palio ci sarà ${c.prize}, un premio dedicato che renderà il percorso ancora più interessante.`:'',
+      c.start_date?`L’inizio è previsto per ${c.start_date}. Tutti gli aggiornamenti saranno pubblicati nella sezione Competizioni.`:''
     ].filter(Boolean).join('\n\n'),
     category:'competizioni',source_type:'competition',source_id:competitionId,cover_url:''
   };
@@ -691,10 +699,10 @@ async function buildSponsorNewsDraft(env,sponsorId){
     title:`${s.name} entra nella community Prime League`,
     excerpt:s.description||`${s.name} è partner di Prime League.`,
     body:[
-      `${s.name} è tra i partner che sostengono il progetto Prime League.`,
-      s.description||'La scheda completa dell’attività è disponibile nella sezione Sponsor.',
-      promoLive&&s.promo_title?`Vantaggio Prime League: ${s.promo_title}${s.promo_code?` · Codice ${s.promo_code}`:''}.`:'',
-      `Contatti, social e informazioni dell’attività sono disponibili nella sua vetrina dedicata.`
+      `${s.name} entra nel network dei partner Prime League, affiancando il progetto e la community durante la stagione.`,
+      s.description||`La collaborazione permette alla community di conoscere più da vicino l’attività attraverso una vetrina dedicata all’interno della piattaforma.`,
+      promoLive&&s.promo_title?`Per la community è inoltre disponibile un Vantaggio Prime League: ${s.promo_title}${s.promo_code?`. Il codice da utilizzare è ${s.promo_code}`:''}.`:'',
+      `Nella scheda sponsor sono disponibili riferimenti, social, contatti e tutte le informazioni fornite dall’attività.`
     ].filter(Boolean).join('\n\n'),
     category:'partner',source_type:'sponsor',source_id:sponsorId,cover_url:s.cover_url||s.logo_url||''
   };
@@ -1524,8 +1532,24 @@ async function route(request, env, path) {
     });
   }
   if (path === 'public/news') {
-    const rows = await env.DB.prepare('SELECT * FROM news WHERE is_published=1 ORDER BY published_at DESC').all();
+    const rows = await env.DB.prepare('SELECT * FROM news WHERE is_published=1 ORDER BY is_featured DESC,published_at DESC').all();
     return json({news:rows.results});
+  }
+
+  if (path.startsWith('public/news/') && method==='GET') {
+    const slug=decodeURIComponent(path.split('/').pop());
+    const article=await env.DB.prepare(`SELECT * FROM news WHERE slug=? AND is_published=1 LIMIT 1`).bind(slug).first();
+    if(!article)return json({error:'Articolo non trovato'},404);
+
+    const related=(await env.DB.prepare(`SELECT id,title,slug,excerpt,cover_url,published_at,category
+      FROM news
+      WHERE is_published=1 AND id<>?
+      ORDER BY
+        CASE WHEN category=? THEN 0 ELSE 1 END,
+        published_at DESC
+      LIMIT 3`).bind(article.id,article.category||'campionato').all()).results;
+
+    return json({article,related});
   }
   if (path === 'public/polls' && method==='GET') {
     const rawToken=String(request.headers.get('x-prime-voter')||'').trim();
