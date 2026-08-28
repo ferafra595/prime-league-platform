@@ -48,3 +48,27 @@
   .poll-result-row{grid-template-columns:1fr}
   .poll-result-data{padding-left:28px}
 }
+
+
+/* ==========================================================
+   VOTA — HERO ALLINEATA ALLE ALTRE PAGINE
+   Solo grafica: nessuna modifica JS/backend.
+   ========================================================== */
+
+.pl-votes-hero{
+  width:calc(100% - 40px) !important;
+  max-width:1180px !important;
+  margin:36px auto 0 !important;
+  padding:70px 56px !important;
+  box-sizing:border-box !important;
+  border-radius:30px !important;
+}
+
+@media(max-width:760px){
+  .pl-votes-hero{
+    width:calc(100% - 32px) !important;
+    margin:24px auto 0 !important;
+    padding:52px 20px 38px !important;
+    border-radius:24px !important;
+  }
+}
