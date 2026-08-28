@@ -72,18 +72,63 @@ function roundRobin(teamIds) {
   }
   return rounds;
 }
-function scheduleRoundGames(roundPairs, cursor, allowedDays, times, maxPerDay) {
-  const out=[];
-  let day=nextAllowedDate(cursor,allowedDays), used=0;
-  for(const pair of roundPairs){
-    if(used>=Math.min(maxPerDay,times.length)){
-      day.setDate(day.getDate()+1); day=nextAllowedDate(day,allowedDays); used=0;
-    }
-    const dt=new Date(day); const [hh,mm]=times[used].split(':').map(Number); dt.setHours(hh,mm,0,0);
-    out.push({pair,date:dt}); used++;
+function shuffleCopy(list){
+  const out=[...list];
+  for(let i=out.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [out[i],out[j]]=[out[j],out[i]];
   }
-  const next=new Date(day); next.setDate(next.getDate()+1);
-  return {games:out,nextCursor:next};
+  return out;
+}
+function mondayOfWeek(value){
+  const d=new Date(value);
+  const offset=(d.getDay()+6)%7;
+  d.setDate(d.getDate()-offset);
+  d.setHours(12,0,0,0);
+  return d;
+}
+function firstEligibleCompetitionWeek(referenceDate){
+  const reference=new Date(referenceDate);
+  reference.setHours(0,0,0,0);
+  let monday=mondayOfWeek(reference);
+  while(true){
+    const candidates=[1,2,3,4].map(offset=>{
+      const d=new Date(monday);
+      d.setDate(monday.getDate()+offset);
+      d.setHours(12,0,0,0);
+      return d;
+    }).filter(d=>d>=reference);
+    if(candidates.length>=3)return monday;
+    monday=new Date(monday);
+    monday.setDate(monday.getDate()+7);
+  }
+}
+function schedulePrimeLeagueRound(roundPairs, weekReference){
+  if(roundPairs.length!==5){
+    throw new Error('La distribuzione settimanale 2 + 2 + 1 richiede esattamente 10 squadre (5 partite per giornata).');
+  }
+  const weekMonday=firstEligibleCompetitionWeek(weekReference);
+  const selectedOffsets=shuffleCopy([1,2,3,4]).slice(0,3).sort((a,b)=>a-b);
+  const singleDayIndex=Math.floor(Math.random()*3);
+  const gamesPerSelectedDay=selectedOffsets.map((_,index)=>index===singleDayIndex?1:2);
+  const pairs=shuffleCopy(roundPairs);
+  const games=[];
+  let pairIndex=0;
+  selectedOffsets.forEach((dayOffset,index)=>{
+    const matchCount=gamesPerSelectedDay[index];
+    const day=new Date(weekMonday);
+    day.setDate(weekMonday.getDate()+dayOffset);
+    for(let slot=0;slot<matchCount;slot++){
+      const dt=new Date(day);
+      if(slot===0)dt.setHours(19,0,0,0);
+      else dt.setHours(20,30,0,0);
+      games.push({pair:pairs[pairIndex++],date:dt});
+    }
+  });
+  games.sort((a,b)=>a.date-b.date);
+  const nextWeek=new Date(weekMonday);
+  nextWeek.setDate(nextWeek.getDate()+7);
+  return {games,weekMonday,nextWeek};
 }
 
 async function ensureAuthSchema(env) {
@@ -1501,47 +1546,34 @@ async function route(request, env, path) {
     if(!seasonId || teamIds.length<2 || !d.start_date) return json({error:'Stagione, data iniziale e almeno due squadre sono obbligatorie'},400);
     const existing=(await env.DB.prepare('SELECT COUNT(*) c FROM matches WHERE season_id=?').bind(seasonId).first()).c;
     if(existing && !d.replace_existing) return json({error:'La stagione contiene già delle partite. Conferma la sostituzione completa.'},409);
-    const allowedDays=(d.allowed_days||[3,4,5]).map(Number).filter(x=>x>=0&&x<=6);
-    const times=(d.times||['19:00','20:00','21:00']).filter(Boolean).slice(0,3);
-    const maxPerDay=Math.max(1,Math.min(3,Number(d.max_per_day||3)));
+    if(teamIds.length!==10){
+      return json({error:'Il calendario automatico 2 + 2 + 1 è configurato per 10 squadre. Seleziona esattamente 10 squadre.'},400);
+    }
     const marketBreakDays=Math.max(0,Number(d.market_break_days||20));
-    const rounds=roundRobin(teamIds); const returnRounds=rounds.map(r=>r.map(([h,a])=>[a,h]));
+    const rounds=roundRobin(teamIds);
+    const returnRounds=rounds.map(r=>r.map(([h,a])=>[a,h]));
     const all=[];
-
-    // Ogni giornata occupa una sola settimana di campionato.
-    // Le partite vengono distribuite nei giorni scelti, poi la giornata
-    // successiva parte dalla settimana seguente.
-    const nextCompetitionWeek = (referenceDate) => {
-      const next = new Date(referenceDate);
-      const mondayOffset = (next.getDay() + 6) % 7;
-      next.setDate(next.getDate() - mondayOffset + 7);
-      next.setHours(12,0,0,0);
-      return nextAllowedDate(next, allowedDays);
-    };
-
-    let cursor=nextAllowedDate(parseLocalDate(d.start_date),allowedDays);
+    let cursor=parseLocalDate(d.start_date);
     let lastFirstLegMatch=null;
 
     for(let i=0;i<rounds.length;i++){
-      const roundStart=new Date(cursor);
-      const sch=scheduleRoundGames(rounds[i],roundStart,allowedDays,times,maxPerDay);
+      const sch=schedulePrimeLeagueRound(rounds[i],cursor);
       sch.games.forEach(g=>all.push({round_name:`${i+1}ª Giornata`,home:g.pair[0],away:g.pair[1],date:g.date,phase:'regular'}));
-      lastFirstLegMatch=sch.games.length ? sch.games[sch.games.length-1].date : roundStart;
-      cursor=nextCompetitionWeek(roundStart);
+      lastFirstLegMatch=sch.games[sch.games.length-1].date;
+      cursor=sch.nextWeek;
     }
 
     // Pausa mercato calcolata dall'ultima partita del girone di andata.
     const restartBase=new Date(lastFirstLegMatch || cursor);
     restartBase.setDate(restartBase.getDate()+marketBreakDays+1);
-    cursor=nextAllowedDate(restartBase,allowedDays);
+    cursor=restartBase;
 
     for(let i=0;i<returnRounds.length;i++){
-      const roundStart=new Date(cursor);
-      const sch=scheduleRoundGames(returnRounds[i],roundStart,allowedDays,times,maxPerDay);
+      const sch=schedulePrimeLeagueRound(returnRounds[i],cursor);
       sch.games.forEach(g=>all.push({round_name:`${rounds.length+i+1}ª Giornata`,home:g.pair[0],away:g.pair[1],date:g.date,phase:'regular'}));
-      cursor=nextCompetitionWeek(roundStart);
+      cursor=sch.nextWeek;
     }
-    if(d.end_date){ const end=parseLocalDate(d.end_date); if(all.some(x=>x.date>end)) return json({error:'Il periodo indicato è troppo breve per tutte le partite. Estendi la data finale o aumenta le partite per sera.'},400); }
+    if(d.end_date){ const end=parseLocalDate(d.end_date); if(all.some(x=>x.date>end)) return json({error:'Il periodo indicato è troppo breve per completare il campionato con una giornata a settimana. Estendi la data finale.'},400); }
     if(existing){
       await env.DB.prepare('DELETE FROM match_events WHERE match_id IN (SELECT id FROM matches WHERE season_id=?)').bind(seasonId).run();
       await env.DB.prepare('DELETE FROM match_submissions WHERE match_id IN (SELECT id FROM matches WHERE season_id=?)').bind(seasonId).run();
