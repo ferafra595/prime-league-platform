@@ -1,0 +1,243 @@
+
+.admin-competition-head-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.admin-competition-head-actions .admin-competition-season{
+  min-width:220px;
+}
+.admin-custom-competitions-section{
+  margin-top:22px;
+}
+.admin-custom-section-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:20px;
+  margin-bottom:13px;
+}
+.admin-custom-section-head h2{
+  margin:4px 0;
+  font-size:24px;
+}
+.admin-custom-section-head p{
+  margin:0;
+  color:#708095;
+  font-size:11px;
+}
+.admin-custom-section-head>b{
+  width:36px;
+  height:36px;
+  display:grid;
+  place-items:center;
+  border-radius:11px;
+  background:#0b2348;
+  color:#fff;
+}
+.admin-custom-competitions-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:14px;
+}
+.admin-custom-competition-card{
+  padding:18px;
+  background:#fff;
+  border:1px solid #dce5ef;
+  border-radius:19px;
+}
+.admin-custom-competition-card.is-hidden{
+  opacity:.68;
+}
+.admin-custom-competition-head{
+  display:grid;
+  grid-template-columns:46px minmax(0,1fr) auto;
+  gap:11px;
+  align-items:start;
+}
+.admin-custom-competition-icon{
+  width:46px;
+  height:46px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  background:#edf4ff;
+  font-size:21px;
+}
+.admin-custom-competition-head>div:nth-child(2)>span{
+  font-size:8px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.1em;
+  color:#1768e8;
+}
+.admin-custom-competition-head h3{
+  margin:3px 0 2px;
+  font-size:18px;
+}
+.admin-custom-competition-head small{
+  color:#758499;
+  font-size:9px;
+}
+.admin-custom-status{
+  padding:6px 8px;
+  border-radius:999px;
+  background:#edf2f7;
+  color:#64758a;
+  font-size:8px;
+  text-transform:uppercase;
+  white-space:nowrap;
+}
+.admin-custom-status.status-in_progress{
+  background:#e5f8ec;
+  color:#08763b;
+}
+.admin-custom-status.status-completed{
+  background:#e6efff;
+  color:#165fca;
+}
+.admin-custom-status.status-cancelled{
+  background:#fdeaea;
+  color:#a22c2c;
+}
+.admin-custom-competition-card>p{
+  margin:14px 0;
+  color:#69788d;
+  font-size:11px;
+  line-height:1.55;
+}
+.admin-custom-competition-meta{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:7px;
+  margin:13px 0;
+}
+.admin-custom-competition-meta>div{
+  padding:9px;
+  border-radius:11px;
+  background:#f5f8fb;
+  display:flex;
+  flex-direction:column;
+}
+.admin-custom-competition-meta span{
+  font-size:7px;
+  text-transform:uppercase;
+  color:#7c899a;
+}
+.admin-custom-competition-meta b{
+  margin-top:3px;
+  font-size:10px;
+}
+.admin-custom-prize{
+  display:flex;
+  flex-direction:column;
+  margin:12px 0;
+  padding:10px 12px;
+  border-radius:12px;
+  background:#fff7d9;
+}
+.admin-custom-prize span{
+  font-size:7px;
+  text-transform:uppercase;
+  color:#8f741b;
+}
+.admin-custom-prize strong{
+  margin-top:3px;
+  font-size:11px;
+}
+.admin-create-competition-empty{
+  grid-column:1/-1;
+  appearance:none;
+  min-height:170px;
+  border:1px dashed #aebdd0;
+  border-radius:18px;
+  background:#fff;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  cursor:pointer;
+  color:#50647e;
+}
+.admin-create-competition-empty>span{
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  background:#edf4ff;
+  color:#1768e8;
+  font-size:24px;
+}
+.admin-create-competition-empty strong{
+  color:#102847;
+  font-size:14px;
+}
+.admin-create-competition-empty small{
+  font-size:9px;
+}
+.competition-crud-editor{
+  margin-bottom:20px;
+}
+.competition-description{
+  min-height:120px;
+}
+.public-custom-competition-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin:12px 0;
+}
+.public-custom-competition-meta small{
+  padding:6px 8px;
+  border-radius:999px;
+  background:#f0f4f8;
+  color:#607188;
+  font-size:8px;
+}
+.public-custom-prize{
+  display:flex;
+  flex-direction:column;
+  margin:10px 0 13px;
+  padding:10px;
+  border-radius:11px;
+  background:#fff7d9;
+}
+.public-custom-prize small{
+  color:#8a721f;
+  font-size:7px;
+  text-transform:uppercase;
+}
+.public-custom-prize strong{
+  margin-top:2px;
+  font-size:10px;
+}
+@media(max-width:850px){
+  .admin-custom-competitions-grid{
+    grid-template-columns:1fr;
+  }
+  .admin-custom-competition-meta{
+    grid-template-columns:1fr 1fr;
+  }
+}
+@media(max-width:650px){
+  .admin-competition-head-actions{
+    width:100%;
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .admin-competition-head-actions .admin-competition-season,
+  .admin-competition-head-actions .btn{
+    width:100%;
+    box-sizing:border-box;
+  }
+  .admin-custom-competition-head{
+    grid-template-columns:42px minmax(0,1fr);
+  }
+  .admin-custom-status{
+    grid-column:2;
+    justify-self:start;
+  }
+}
