@@ -15,3 +15,6 @@
 .admin-editor-title{display:flex;justify-content:space-between;align-items:center;gap:15px}
 @media(max-width:900px){.gcal-toolbar{align-items:flex-start;flex-direction:column}.gcal-view-switch{width:100%}.gcal-view-switch button{flex:1}.gcal-month-grid{grid-template-columns:repeat(7,minmax(90px,1fr));min-width:700px}.gcal-month{overflow-x:auto}.gcal-day-cell{min-height:125px}.gcal-toolbar-left{width:100%;flex-wrap:wrap}.gcal-toolbar h2{width:100%;margin:7px 0 0}.gcal-summary{flex-direction:column}.gcal-agenda-item{grid-template-columns:60px 1fr}}
 @media(max-width:520px){.gcal-shell{border-radius:16px}.gcal-toolbar{padding:14px}.gcal-toolbar h2{font-size:19px}.gcal-day-view{padding:12px}.gcal-agenda-item{grid-template-columns:1fr;gap:5px}.gcal-agenda-time{font-size:15px}}
+
+
+.calendar-fixed-rules{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.calendar-fixed-rules span{display:inline-flex;align-items:center;padding:7px 10px;border-radius:999px;background:#edf4ff;color:#1d5fc8;font-size:10px;font-weight:800}@media(max-width:650px){.calendar-fixed-rules{display:grid;grid-template-columns:1fr 1fr}.calendar-fixed-rules span{justify-content:center;text-align:center}}
