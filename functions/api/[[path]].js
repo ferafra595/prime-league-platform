@@ -528,6 +528,178 @@ function mapCustomCompetition(row){
   };
 }
 
+
+async function ensureNewsAutomationSchema(env){
+  const cols=(await env.DB.prepare(`PRAGMA table_info(news)`).all()).results.map(x=>x.name);
+  const additions=[
+    ['category',`TEXT NOT NULL DEFAULT 'campionato'`],
+    ['source_type',`TEXT NOT NULL DEFAULT 'manual'`],
+    ['source_id',`TEXT`],
+    ['is_featured',`INTEGER NOT NULL DEFAULT 0`],
+    ['auto_generated',`INTEGER NOT NULL DEFAULT 0`]
+  ];
+  for(const [name,type] of additions){
+    if(!cols.includes(name)){
+      try{await env.DB.prepare(`ALTER TABLE news ADD COLUMN ${name} ${type}`).run()}catch{}
+    }
+  }
+  try{await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_news_source ON news(source_type,source_id)`).run()}catch{}
+}
+
+async function createNewsDraftIfMissing(env,{title,excerpt,body,category='campionato',source_type='manual',source_id=null,cover_url=''}){
+  if(source_type!=='manual' && source_id!==null){
+    const existing=await env.DB.prepare(`SELECT id FROM news WHERE source_type=? AND source_id=? LIMIT 1`)
+      .bind(source_type,String(source_id)).first();
+    if(existing)return existing.id;
+  }
+  const slugBase=slugify(title)||`news-${Date.now()}`;
+  let slug=slugBase,n=2;
+  while(await env.DB.prepare(`SELECT id FROM news WHERE slug=?`).bind(slug).first())slug=`${slugBase}-${n++}`;
+  const r=await env.DB.prepare(`INSERT INTO news
+    (title,slug,excerpt,body,cover_url,is_published,published_at,category,source_type,source_id,is_featured,auto_generated)
+    VALUES(?,?,?,?,?,0,NULL,?,?,?,?,1)`)
+    .bind(title,slug,excerpt||'',body||'',cover_url||'',category,source_type,source_id===null?null:String(source_id),0).run();
+  return r.meta.last_row_id;
+}
+
+async function buildMatchNewsDraft(env,matchId){
+  const match=await env.DB.prepare(`SELECT m.*,ht.name home_name,ht.logo_url home_logo,at.name away_name,at.logo_url away_logo,
+    p.first_name mvp_first_name,p.last_name mvp_last_name
+    FROM matches m
+    JOIN teams ht ON ht.id=m.home_team_id
+    JOIN teams at ON at.id=m.away_team_id
+    LEFT JOIN players p ON p.id=m.mvp_player_id
+    WHERE m.id=?`).bind(matchId).first();
+  if(!match||match.status!=='published')return null;
+
+  const scorers=(await env.DB.prepare(`SELECT p.first_name,p.last_name,t.name team_name,
+      SUM(e.quantity) goals
+    FROM match_events e
+    JOIN players p ON p.id=e.player_id
+    JOIN teams t ON t.id=e.team_id
+    WHERE e.match_id=? AND e.event_type='goal'
+    GROUP BY p.id,t.id
+    ORDER BY t.id,goals DESC,p.last_name`).bind(matchId).all()).results;
+
+  const home=Number(match.home_score||0),away=Number(match.away_score||0);
+  let title;
+  if(home>away)title=`${match.home_name} supera ${match.away_name} ${home}-${away}`;
+  else if(away>home)title=`${match.away_name} passa contro ${match.home_name}: ${away}-${home}`;
+  else title=`Parità tra ${match.home_name} e ${match.away_name}: ${home}-${away}`;
+
+  const scorerText=scorers.length
+    ? scorers.map(x=>`${x.first_name} ${x.last_name}${Number(x.goals)>1?` (${x.goals})`:''}`).join(', ')
+    : '';
+  const mvp=match.mvp_first_name?`${match.mvp_first_name} ${match.mvp_last_name}`:'';
+
+  const excerpt=`${match.round_name||'Prime League'}: ${match.home_name} ${home}-${away} ${match.away_name}.`;
+  const parts=[
+    `${match.home_name} e ${match.away_name} si sono affrontate in ${match.round_name||'una gara di Prime League'}, con il risultato finale di ${home}-${away}.`,
+    scorerText?`Marcatori: ${scorerText}.`:'',
+    mvp?`MVP della partita: ${mvp}.`:'',
+    `Risultato e statistiche sono stati aggiornati dopo l’approvazione del referto ufficiale.`
+  ].filter(Boolean);
+
+  const id=await createNewsDraftIfMissing(env,{
+    title,excerpt,body:parts.join('\n\n'),category:'risultati',
+    source_type:'match',source_id:matchId,cover_url:home>away?match.home_logo:away>home?match.away_logo:''
+  });
+  return id;
+}
+
+async function buildRoundNewsDraft(env,seasonId,roundName){
+  const matches=(await env.DB.prepare(`SELECT m.*,ht.name home_name,at.name away_name
+    FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+    WHERE m.season_id=? AND m.round_name=? ORDER BY datetime(m.match_date),m.id`)
+    .bind(seasonId,roundName).all()).results;
+
+  if(!matches.length || matches.some(m=>m.status!=='published'))return null;
+
+  const results=matches.map(m=>`${m.home_name} ${m.home_score}-${m.away_score} ${m.away_name}`);
+  const tableData=await standings(env,seasonId);
+  const leader=tableData.standings?.[0];
+
+  const excerpt=`Tutti i risultati di ${roundName}${leader?` e la nuova capolista ${leader.name}`:''}.`;
+  const body=[
+    `${roundName} è completa. Ecco tutti i risultati ufficiali della giornata:`,
+    results.map(x=>`• ${x}`).join('\n'),
+    leader?`Al termine della giornata, ${leader.name} guida la classifica con ${leader.points} punti.`:'',
+    `Classifica e statistiche sono già aggiornate sulla piattaforma Prime League.`
+  ].filter(Boolean).join('\n\n');
+
+  return createNewsDraftIfMissing(env,{
+    title:`${roundName}: risultati e classifica aggiornata`,
+    excerpt,body,category:'campionato',
+    source_type:'round',source_id:`${seasonId}:${roundName}`
+  });
+}
+
+async function buildPlayerNewsDraft(env,playerId){
+  const current=await env.DB.prepare(`SELECT id FROM seasons WHERE is_current=1 ORDER BY id DESC LIMIT 1`).first();
+  const seasonId=current?.id||null;
+  const p=await env.DB.prepare(`SELECT p.*,t.name team_name,t.logo_url team_logo
+    FROM players p JOIN teams t ON t.id=p.team_id WHERE p.id=?`).bind(playerId).first();
+  if(!p)return null;
+
+  let stats={appearances:0,goals:0,assists:0,mvps:0};
+  if(seasonId){
+    const row=await env.DB.prepare(`SELECT
+      (SELECT COUNT(DISTINCT ml.match_id) FROM match_lineups ml JOIN matches m ON m.id=ml.match_id WHERE ml.player_id=? AND ml.played=1 AND m.status='published' AND m.season_id=?) appearances,
+      (SELECT COALESCE(SUM(e.quantity),0) FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.player_id=? AND e.event_type='goal' AND m.status='published' AND m.season_id=?) goals,
+      (SELECT COUNT(*) FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.assist_player_id=? AND e.event_type='goal' AND m.status='published' AND m.season_id=?) assists,
+      (SELECT COUNT(*) FROM matches m WHERE m.mvp_player_id=? AND m.status='published' AND m.season_id=?) mvps`)
+      .bind(playerId,seasonId,playerId,seasonId,playerId,seasonId,playerId,seasonId).first();
+    stats=row||stats;
+  }
+
+  const name=`${p.first_name} ${p.last_name}`;
+  return {
+    title:`Focus giocatore: ${name}`,
+    excerpt:`Numeri e percorso di ${name}, ${p.team_name}.`,
+    body:[
+      `${name} è uno dei giocatori della rosa di ${p.team_name}.`,
+      `Presenze: ${Number(stats.appearances||0)} · Gol: ${Number(stats.goals||0)} · Assist: ${Number(stats.assists||0)} · MVP: ${Number(stats.mvps||0)}.`,
+      `La scheda completa del giocatore e le statistiche aggiornate sono disponibili sulla piattaforma Prime League.`
+    ].join('\n\n'),
+    category:'giocatori',source_type:'player',source_id:playerId,cover_url:p.photo_url||p.team_logo||''
+  };
+}
+
+async function buildCompetitionNewsDraft(env,competitionId){
+  const c=await env.DB.prepare(`SELECT * FROM custom_competitions WHERE id=?`).bind(competitionId).first();
+  if(!c)return null;
+  const formatMap={knockout:'eliminazione diretta',groups_knockout:'gironi più fase a eliminazione',round_robin:'girone',single_match:'partita secca',custom:'formula personalizzata'};
+  return {
+    title:`${c.name}: la nuova competizione Prime League`,
+    excerpt:c.description||`Scopri la nuova competizione ${c.name}.`,
+    body:[
+      c.description||`${c.name} entra nel programma ufficiale Prime League.`,
+      `Formula: ${formatMap[c.format]||c.format}.`,
+      c.participant_count?`Partecipanti previsti: ${c.participant_count}.`:'',
+      c.prize?`Premio: ${c.prize}.`:'',
+      c.start_date?`Inizio previsto: ${c.start_date}.`:''
+    ].filter(Boolean).join('\n\n'),
+    category:'competizioni',source_type:'competition',source_id:competitionId,cover_url:''
+  };
+}
+
+async function buildSponsorNewsDraft(env,sponsorId){
+  const s=await env.DB.prepare(`SELECT * FROM sponsors WHERE id=?`).bind(sponsorId).first();
+  if(!s)return null;
+  const promoLive=typeof sponsorPromoLive==='function'?sponsorPromoLive(s):Number(s.promo_active||0)===1;
+  return {
+    title:`${s.name} entra nella community Prime League`,
+    excerpt:s.description||`${s.name} è partner di Prime League.`,
+    body:[
+      `${s.name} è tra i partner che sostengono il progetto Prime League.`,
+      s.description||'La scheda completa dell’attività è disponibile nella sezione Sponsor.',
+      promoLive&&s.promo_title?`Vantaggio Prime League: ${s.promo_title}${s.promo_code?` · Codice ${s.promo_code}`:''}.`:'',
+      `Contatti, social e informazioni dell’attività sono disponibili nella sua vetrina dedicata.`
+    ].filter(Boolean).join('\n\n'),
+    category:'partner',source_type:'sponsor',source_id:sponsorId,cover_url:s.cover_url||s.logo_url||''
+  };
+}
+
 async function route(request, env, path) {
   const method = request.method;
   const user = await currentUser(request, env);
@@ -2058,6 +2230,19 @@ async function route(request, env, path) {
             .bind(s.match_id,e.team_id,e.player_id,null,e.event_type,e.quantity).run();
         }
       }
+
+      // NEWS AUTOMATION:
+      // match draft is created only once; if all matches of the round are complete,
+      // a round-summary draft is also created.
+      try{
+        await buildMatchNewsDraft(env,s.match_id);
+        const officialMatch=await env.DB.prepare(`SELECT season_id,round_name FROM matches WHERE id=?`).bind(s.match_id).first();
+        if(officialMatch?.round_name){
+          await buildRoundNewsDraft(env,officialMatch.season_id,officialMatch.round_name);
+        }
+      }catch(newsError){
+        console.error('automatic news draft failed',newsError);
+      }
     }
     else await env.DB.prepare("UPDATE match_submissions SET status='rejected',admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").bind(d.admin_note||'',id).run(); await audit(env,user.id,action,'match_submission',id,d); return json({ok:true});
   }
@@ -2264,10 +2449,85 @@ async function route(request, env, path) {
     }
   }
 
+
+  if (path === 'admin/news/setup-data' && method==='GET') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+
+    const [matches,players,competitions,sponsors,seasons]=await Promise.all([
+      env.DB.prepare(`SELECT m.id,m.season_id,m.round_name,m.match_date,m.home_score,m.away_score,
+        ht.name home_name,at.name away_name
+        FROM matches m JOIN teams ht ON ht.id=m.home_team_id JOIN teams at ON at.id=m.away_team_id
+        WHERE m.status='published'
+        ORDER BY datetime(m.match_date) DESC LIMIT 100`).all(),
+      env.DB.prepare(`SELECT p.id,p.first_name,p.last_name,t.name team_name
+        FROM players p JOIN teams t ON t.id=p.team_id
+        WHERE p.is_active=1 ORDER BY p.last_name,p.first_name`).all(),
+      env.DB.prepare(`SELECT id,season_id,name,status,competition_type,format
+        FROM custom_competitions ORDER BY id DESC`).all(),
+      env.DB.prepare(`SELECT id,name,category,promo_active,promo_title
+        FROM sponsors WHERE is_active=1 ORDER BY name`).all(),
+      env.DB.prepare(`SELECT * FROM seasons ORDER BY is_current DESC,start_date DESC,id DESC`).all()
+    ]);
+
+    const rounds=[...new Map(matches.results.map(m=>[
+      `${m.season_id}:${m.round_name}`,
+      {id:`${m.season_id}:${m.round_name}`,season_id:m.season_id,round_name:m.round_name}
+    ])).values()];
+
+    return json({
+      matches:matches.results,
+      rounds,
+      players:players.results,
+      competitions:competitions.results,
+      sponsors:sponsors.results,
+      seasons:seasons.results
+    });
+  }
+
+  if (path === 'admin/news/generate-draft' && method==='POST') {
+    const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
+    const d=await body(request);
+    const type=String(d.source_type||'').trim();
+    let draft=null;
+
+    if(type==='match'){
+      const id=await buildMatchNewsDraft(env,Number(d.source_id));
+      if(!id)return json({error:'La partita deve essere conclusa e pubblicata'},400);
+      return json({ok:true,id,created:true});
+    }
+
+    if(type==='round'){
+      const [seasonId,...roundParts]=String(d.source_id||'').split(':');
+      const roundName=roundParts.join(':');
+      if(!seasonId||!roundName)return json({error:'Giornata non valida'},400);
+      const id=await buildRoundNewsDraft(env,Number(seasonId),roundName);
+      if(!id)return json({error:'La giornata non è ancora completamente conclusa'},400);
+      return json({ok:true,id,created:true});
+    }
+
+    if(type==='player')draft=await buildPlayerNewsDraft(env,Number(d.source_id));
+    if(type==='competition')draft=await buildCompetitionNewsDraft(env,Number(d.source_id));
+    if(type==='sponsor')draft=await buildSponsorNewsDraft(env,Number(d.source_id));
+    if(!draft)return json({error:'Impossibile generare la bozza dalla fonte selezionata'},400);
+
+    const id=await createNewsDraftIfMissing(env,draft);
+    return json({ok:true,id,created:true});
+  }
+
   if (path === 'admin/news') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
-    if(method==='GET') return json({news:(await env.DB.prepare('SELECT * FROM news ORDER BY created_at DESC').all()).results});
-    if(method==='POST') { const d=await body(request); const result=await env.DB.prepare('INSERT INTO news(title,slug,excerpt,body,cover_url,is_published,published_at) VALUES(?,?,?,?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END)').bind(d.title,slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',d.is_published?1:0,d.is_published?1:0).run(); await audit(env,user.id,'create','news',result.meta.last_row_id,d); return json({ok:true,id:result.meta.last_row_id},201); }
+    if(method==='GET') return json({news:(await env.DB.prepare(`SELECT * FROM news ORDER BY is_published ASC,created_at DESC`).all()).results});
+    if(method==='POST') {
+      const d=await body(request);
+      const result=await env.DB.prepare(`INSERT INTO news
+        (title,slug,excerpt,body,cover_url,is_published,published_at,category,source_type,source_id,is_featured,auto_generated)
+        VALUES(?,?,?,?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?,?,?)`)
+        .bind(d.title,slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',
+          d.is_published?1:0,d.is_published?1:0,d.category||'campionato',d.source_type||'manual',
+          d.source_id||null,d.is_featured?1:0,d.auto_generated?1:0).run();
+      await audit(env,user.id,'create','news',result.meta.last_row_id,d);
+      return json({ok:true,id:result.meta.last_row_id},201);
+    }
   }
   if (path === 'admin/polls/setup-data' && method==='GET') {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied;
@@ -2387,7 +2647,16 @@ async function route(request, env, path) {
   }
   if (path.match(/^admin\/news\/\d+$/)) {
     const denied=requireAnyRole(user,'super_admin','organizer'); if(denied)return denied; const id=Number(path.split('/').pop()); const d=method==='PUT'?await body(request):{};
-    if(method==='PUT'){await env.DB.prepare(`UPDATE news SET title=?,slug=?,excerpt=?,body=?,cover_url=?,is_published=?,published_at=CASE WHEN ?=1 THEN COALESCE(published_at,CURRENT_TIMESTAMP) ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(safeText(d.title),slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',d.is_published?1:0,d.is_published?1:0,id).run();await audit(env,user.id,'update','news',id,d);return json({ok:true});}
+    if(method==='PUT'){
+      await env.DB.prepare(`UPDATE news SET
+        title=?,slug=?,excerpt=?,body=?,cover_url=?,is_published=?,
+        published_at=CASE WHEN ?=1 THEN COALESCE(published_at,CURRENT_TIMESTAMP) ELSE NULL END,
+        category=?,is_featured=?,updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`)
+        .bind(safeText(d.title),slugify(d.slug||d.title),d.excerpt||'',d.body||'',d.cover_url||'',
+          d.is_published?1:0,d.is_published?1:0,d.category||'campionato',d.is_featured?1:0,id).run();
+      await audit(env,user.id,'update','news',id,d);return json({ok:true});
+    }
     if(method==='DELETE'){await env.DB.prepare('DELETE FROM news WHERE id=?').bind(id).run();await audit(env,user.id,'delete','news',id,{});return json({ok:true});}
   }
   if (path.match(/^admin\/polls\/\d+$/)) {
@@ -2439,6 +2708,6 @@ async function route(request, env, path) {
 
 export async function onRequest(context) {
   const path = context.params.path ? (Array.isArray(context.params.path) ? context.params.path.join('/') : context.params.path) : '';
-  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); await ensureFormulaSchema(context.env); await ensureCustomCompetitionsSchema(context.env); return await route(context.request, context.env, path); }
+  try { await ensureAuthSchema(context.env); await ensureCalendarSchema(context.env); await ensureAnonymousVoteSchema(context.env); await ensureFaqSchema(context.env); await ensureSponsorProfileSchema(context.env); await ensureFormulaSchema(context.env); await ensureCustomCompetitionsSchema(context.env); await ensureNewsAutomationSchema(context.env); return await route(context.request, context.env, path); }
   catch (error) { console.error(error); return json({ error:'Errore interno', detail:error.message },500); }
 }
